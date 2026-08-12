@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import base64
+import copy
 import sys
 import tempfile
 import unittest
@@ -269,6 +270,13 @@ class NormalizationTests(unittest.TestCase):
 
 
 class DocxTests(unittest.TestCase):
+    @staticmethod
+    def save_and_verify(ledger: dict, root: Path, name: str = "master-note.docx") -> tuple[Path, dict]:
+        output = root / name
+        document = build_document(ledger, None, "완성 후보")
+        document.save(output)
+        return output, verify_docx(output, ledger)
+
     def test_build_and_independently_verify(self) -> None:
         ledger = valid_ledger()
         with tempfile.TemporaryDirectory() as tmp:
@@ -291,11 +299,128 @@ class DocxTests(unittest.TestCase):
                 }
             ]
             ledger["question_occurrences"][0]["image_ids"] = ["IMG-1"]
-            output = Path(tmp) / "master-note.docx"
-            document = build_document(ledger, None, "완성 후보")
-            document.save(output)
-            report = verify_docx(output, ledger)
+            output, report = self.save_and_verify(ledger, Path(tmp))
             self.assertTrue(report["valid"], report["errors"])
+            self.assertGreaterEqual(report["counts"]["drawings_found"], 1)
+
+    def test_a4_45_55_repeated_headers_and_header_only(self) -> None:
+        ledger = valid_ledger()
+        with tempfile.TemporaryDirectory() as tmp:
+            output, report = self.save_and_verify(ledger, Path(tmp), "layout.docx")
+            self.assertTrue(report["valid"], report["errors"])
+            self.assertEqual(4, report["counts"]["problem_tables_found"])
+            with zipfile.ZipFile(output) as archive:
+                document_xml = archive.read("word/document.xml").decode("utf-8")
+                footer_xml = "".join(
+                    archive.read(name).decode("utf-8")
+                    for name in archive.namelist()
+                    if name.startswith("word/footer") and name.endswith(".xml")
+                )
+                header_xml = "".join(
+                    archive.read(name).decode("utf-8")
+                    for name in archive.namelist()
+                    if name.startswith("word/header") and name.endswith(".xml")
+                )
+            self.assertIn('w:w="11906"', document_xml)
+            self.assertIn('w:h="16838"', document_xml)
+            self.assertIn('w:tblCaption w:val="representative:R-1"', document_xml)
+            self.assertIn('w:w="4428"', document_xml)
+            self.assertIn('w:w="5412"', document_xml)
+            self.assertIn("w:tblHeader", document_xml)
+            self.assertIn("제1강", header_xml)
+            self.assertIn("작년 기출 실전 순서", header_xml)
+            self.assertNotIn("Page", footer_xml)
+            self.assertNotIn("PAGE", footer_xml)
+
+    def test_types_repetition_long_explanation_and_conflict(self) -> None:
+        ledger = valid_ledger()
+        repeated = copy.deepcopy(ledger["question_occurrences"][0])
+        repeated.update({"id": "Q-3", "year": 2022, "source_order": 2, "word_location": "part1/R-1/Q-3"})
+        ledger["question_occurrences"].append(repeated)
+        ledger["representative_types"][0]["question_ids"].append("Q-3")
+        ledger["representative_types"][0]["explanation_components"].append(
+            {
+                "text": "상세 기전과 예외를 빠짐없이 설명한다. " * 80,
+                "provenance": [
+                    {"kind": "lecture_note_supplement", "source_artifact_id": "S-1", "source_page": 1}
+                ],
+            }
+        )
+
+        essay = {
+            "id": "Q-4",
+            "source_artifact_id": "S-1",
+            "year": 2023,
+            "source_order": 3,
+            "source_page": 2,
+            "question_type": "서술형",
+            "original_problem": "진단과 치료를 모두 서술하시오.",
+            "original_choices": [],
+            "original_answer": "진단 기준과 치료 원칙",
+            "original_explanation": "서술형 원문 해설",
+            "image_ids": [],
+            "representative_type_id": "R-2",
+            "word_location": "part1/R-2/Q-4",
+            "status": "verified",
+        }
+        short = {
+            "id": "Q-5",
+            "source_artifact_id": "S-1",
+            "year": 2023,
+            "source_order": 4,
+            "source_page": 2,
+            "question_type": "단답형",
+            "original_problem": "진단명은?",
+            "original_choices": [],
+            "original_answer": "가상 진단",
+            "original_explanation": "단답형 원문 해설",
+            "image_ids": [],
+            "representative_type_id": "R-3",
+            "word_location": "part1/R-3/Q-5",
+            "status": "verified",
+        }
+        ledger["question_occurrences"].extend([essay, short])
+        ledger["representative_types"].extend(
+            [
+                {
+                    "id": "R-2",
+                    "title": "완성형 서술형",
+                    "question_type": "서술형",
+                    "lecture_unit": "제2강",
+                    "lecture_order": 2,
+                    "question_ids": ["Q-4"],
+                    "problem_components": [{"text": essay["original_problem"], "provenance": original("Q-4", "original_problem")}],
+                    "choice_components": [],
+                    "answer_components": [{"text": "모든 하위 질문의 완전 답안", "provenance": original("Q-4", "original_answer")}],
+                    "explanation_components": [{"text": essay["original_explanation"], "provenance": original("Q-4", "original_explanation")}],
+                },
+                {
+                    "id": "R-3",
+                    "title": "완성형 단답형",
+                    "question_type": "단답형",
+                    "lecture_unit": "제3강",
+                    "lecture_order": 3,
+                    "question_ids": ["Q-5"],
+                    "problem_components": [{"text": short["original_problem"], "provenance": original("Q-5", "original_problem")}],
+                    "choice_components": [],
+                    "answer_components": [{"text": short["original_answer"], "provenance": original("Q-5", "original_answer")}],
+                    "explanation_components": [{"text": short["original_explanation"], "provenance": original("Q-5", "original_explanation")}],
+                },
+            ]
+        )
+        ledger["prior_year_sequence"][0]["conflict_status"] = "disputed"
+        with tempfile.TemporaryDirectory() as tmp:
+            output, report = self.save_and_verify(ledger, Path(tmp), "types.docx")
+            self.assertTrue(report["valid"], report["errors"])
+            with zipfile.ZipFile(output) as archive:
+                xml = archive.read("word/document.xml").decode("utf-8")
+            self.assertIn("원문 답과 보충 판정 불일치", xml)
+            self.assertIn("모든 하위 질문의 완전 답안", xml)
+            self.assertIn("가상 진단", xml)
+            self.assertIn('w:tblCaption w:val="occurrence:part1:R-1:Q-3"', xml)
+            representative_start = xml.index('w:tblCaption w:val="representative:R-1"')
+            representative_end = xml.index("</w:tbl>", representative_start)
+            self.assertNotIn("w:cantSplit", xml[representative_start:representative_end])
 
 
 if __name__ == "__main__":

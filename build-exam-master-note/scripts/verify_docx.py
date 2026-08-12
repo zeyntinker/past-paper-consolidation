@@ -13,11 +13,15 @@ from common import load_json, save_json
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+NS = {"w": W_NS, "a": A_NS, "r": R_NS}
 
 
-def extract_document_text(docx_path: Path) -> tuple[str, int]:
-    with zipfile.ZipFile(docx_path) as archive:
-        root = ElementTree.fromstring(archive.read("word/document.xml"))
+def attr(name: str) -> str:
+    return f"{{{W_NS}}}{name}"
+
+
+def visible_text(root: ElementTree.Element) -> str:
     chunks: list[str] = []
 
     def walk(element: ElementTree.Element) -> None:
@@ -34,15 +38,131 @@ def extract_document_text(docx_path: Path) -> tuple[str, int]:
             chunks.append("\n")
 
     walk(root)
-    drawing_count = len(root.findall(f".//{{{A_NS}}}blip"))
-    return "".join(chunks), drawing_count
+    return "".join(chunks)
+
+
+def read_parts(docx_path: Path) -> tuple[ElementTree.Element, dict[str, ElementTree.Element]]:
+    with zipfile.ZipFile(docx_path) as archive:
+        document = ElementTree.fromstring(archive.read("word/document.xml"))
+        parts: dict[str, ElementTree.Element] = {}
+        for name in archive.namelist():
+            if name.startswith("word/header") and name.endswith(".xml"):
+                parts[name] = ElementTree.fromstring(archive.read(name))
+            elif name.startswith("word/footer") and name.endswith(".xml"):
+                parts[name] = ElementTree.fromstring(archive.read(name))
+    return document, parts
+
+
+def table_caption(table: ElementTree.Element) -> str:
+    node = table.find("./w:tblPr/w:tblCaption", NS)
+    return node.get(attr("val"), "") if node is not None else ""
+
+
+def table_grid(table: ElementTree.Element) -> list[int]:
+    return [int(node.get(attr("w"), "0")) for node in table.findall("./w:tblGrid/w:gridCol", NS)]
+
+
+def inspect_layout(root: ElementTree.Element, parts: dict[str, ElementTree.Element]) -> dict[str, Any]:
+    tables = root.findall(".//w:tbl", NS)
+    identified = {table_caption(table): table for table in tables if table_caption(table)}
+    headers = [visible_text(part).strip() for name, part in parts.items() if "/header" in name]
+    footers = [visible_text(part).strip() for name, part in parts.items() if "/footer" in name]
+    image_cell_spans: list[int] = []
+    for table in tables:
+        for cell in table.findall(".//w:tc", NS):
+            if cell.find(".//a:blip", NS) is None:
+                continue
+            span_node = cell.find("./w:tcPr/w:gridSpan", NS)
+            image_cell_spans.append(int(span_node.get(attr("val"), "1")) if span_node is not None else 1)
+    return {
+        "tables": tables,
+        "identified_tables": identified,
+        "headers": headers,
+        "footers": footers,
+        "image_cell_spans": image_cell_spans,
+    }
+
+
+def verify_geometry(layout: dict[str, Any], ledger: dict[str, Any], errors: list[str]) -> None:
+    root_tables = layout["tables"]
+    identified = layout["identified_tables"]
+    expected_grid = [4428, 5412]
+    for representative in ledger.get("representative_types", []):
+        caption = f"representative:{representative.get('id', '?')}"
+        table = identified.get(caption)
+        if table is None:
+            errors.append(f"missing representative 45:55 table: {caption}")
+            continue
+        if table_grid(table) != expected_grid:
+            errors.append(f"wrong 45:55 grid for {caption}: {table_grid(table)}")
+        if table.find("./w:tr[1]/w:trPr/w:tblHeader", NS) is None:
+            errors.append(f"missing repeated header row flag: {caption}")
+
+    expected_occurrences = len(ledger.get("question_occurrences", [])) + sum(
+        len(entry.get("question_ids", [])) for entry in ledger.get("prior_year_sequence", [])
+    )
+    occurrence_tables = [table for table in root_tables if table_caption(table).startswith("occurrence:")]
+    if len(occurrence_tables) != expected_occurrences:
+        errors.append(
+            f"occurrence table count mismatch: expected {expected_occurrences}, found {len(occurrence_tables)}"
+        )
+    for table in occurrence_tables:
+        caption = table_caption(table)
+        if table_grid(table) != expected_grid:
+            errors.append(f"wrong 45:55 grid for {caption}: {table_grid(table)}")
+        if table.find("./w:tr[1]/w:trPr/w:tblHeader", NS) is None:
+            errors.append(f"missing repeated header row flag: {caption}")
+
+    if layout["image_cell_spans"] and any(span != 2 for span in layout["image_cell_spans"]):
+        errors.append("one or more images are not in a full-width merged two-column row")
+
+
+def verify_sections(root: ElementTree.Element, layout: dict[str, Any], ledger: dict[str, Any], errors: list[str]) -> None:
+    section_props = root.findall(".//w:sectPr", NS)
+    if not section_props:
+        errors.append("DOCX has no section properties")
+    for index, section in enumerate(section_props, start=1):
+        size = section.find("./w:pgSz", NS)
+        margin = section.find("./w:pgMar", NS)
+        if size is None or size.get(attr("w")) != "11906" or size.get(attr("h")) != "16838":
+            errors.append(f"section {index} is not A4 portrait")
+        if margin is None:
+            errors.append(f"section {index} lacks page margins")
+        else:
+            for side in ("left", "right"):
+                value = int(margin.get(attr(side), "0"))
+                if not 900 <= value <= 1021:
+                    errors.append(f"section {index} {side} margin is outside 16-18 mm: {value}")
+
+    header_text = "\n".join(layout["headers"])
+    required_headers = {rep.get("lecture_unit", "강의 순서 단권화") for rep in ledger.get("representative_types", [])}
+    required_headers.add("작년 기출 실전 순서")
+    for required in required_headers:
+        if required and required not in header_text:
+            errors.append(f"missing running header: {required}")
+    if any(text for text in layout["footers"]):
+        errors.append("footer content exists although the layout contract requires header only")
+
+
+def verify_plain_provenance(root: ElementTree.Element, errors: list[str]) -> None:
+    prefixes = ("[원문", "[AI 복원", "[족보 보충", "[단권화 보충", "[AI 외부 보충", "[출처 확인 필요")
+    for run in root.findall(".//w:r", NS):
+        text = "".join(node.text or "" for node in run.findall(".//w:t", NS))
+        if not text.lstrip().startswith(prefixes):
+            continue
+        r_pr = run.find("./w:rPr", NS)
+        if r_pr is not None and r_pr.find("./w:color", NS) is not None:
+            errors.append(f"provenance text uses color formatting: {text[:40]}")
 
 
 def verify_docx(docx_path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
-    text, drawing_count = extract_document_text(docx_path)
+    root, parts = read_parts(docx_path)
+    text = visible_text(root)
+    drawing_count = len(root.findall(".//a:blip", NS))
     questions = ledger.get("question_occurrences", [])
     images = ledger.get("images", [])
+    layout = inspect_layout(root, parts)
 
     for required_heading in (
         "제1부. 강의 순서 단권화",
@@ -64,6 +184,17 @@ def verify_docx(docx_path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
             if choice and choice not in text:
                 errors.append(f"missing exact choice {index} for {question_id}")
 
+    for representative in ledger.get("representative_types", []):
+        for field in ("problem_components", "choice_components", "answer_components", "explanation_components"):
+            for component in representative.get(field, []):
+                value = component.get("text", "")
+                if value and value not in text:
+                    errors.append(f"missing representative component {representative.get('id')}:{field}")
+                for rationale in component.get("rationale_components", []):
+                    rationale_text = rationale.get("text", "")
+                    if rationale_text and rationale_text not in text:
+                        errors.append(f"missing rationale for representative {representative.get('id')}")
+
     included_images = 0
     for image in images:
         image_id = image.get("id", "<missing>")
@@ -74,9 +205,7 @@ def verify_docx(docx_path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
         elif image.get("status") != "review_required":
             errors.append(f"image lacks Word location and review status: {image_id}")
     if drawing_count < included_images:
-        errors.append(
-            f"DOCX contains {drawing_count} drawings but ledger expects at least {included_images} included images"
-        )
+        errors.append(f"DOCX contains {drawing_count} drawings but ledger expects at least {included_images} included images")
 
     part_two = text.find("제2부. 작년 기출 실전 순서")
     part_three = text.find("제3부. 완전성 감사표")
@@ -84,8 +213,7 @@ def verify_docx(docx_path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
         prior_text = text[part_two:part_three]
         previous = -1
         for entry in ledger.get("prior_year_sequence", []):
-            question_ids = entry.get("question_ids", [])
-            positions = [prior_text.find(question_id) for question_id in question_ids]
+            positions = [prior_text.find(question_id) for question_id in entry.get("question_ids", [])]
             if any(position < 0 for position in positions):
                 errors.append(f"prior-year entry {entry.get('sequence')} is missing question IDs")
                 continue
@@ -94,6 +222,10 @@ def verify_docx(docx_path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
                 errors.append("prior-year question order differs from ledger")
                 break
             previous = current
+
+    verify_geometry(layout, ledger, errors)
+    verify_sections(root, layout, ledger, errors)
+    verify_plain_provenance(root, errors)
 
     blocking = [
         finding
@@ -112,6 +244,9 @@ def verify_docx(docx_path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
             "images_expected_in_docx": included_images,
             "drawings_found": drawing_count,
             "prior_year_entries": len(ledger.get("prior_year_sequence", [])),
+            "problem_tables_found": len(
+                [table for table in layout["tables"] if table_caption(table).startswith(("representative:", "occurrence:"))]
+            ),
         },
     }
 

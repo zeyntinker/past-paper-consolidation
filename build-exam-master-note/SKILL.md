@@ -70,6 +70,8 @@ Read [verification-gates.md](references/verification-gates.md) before deciding s
 
 Run `scripts/build_docx.py` using `assets/master-note-template.docx`, then run `scripts/verify_docx.py` against the independent ledger.
 
+Read [docx-layout-contract.md](references/docx-layout-contract.md) before building the document. Preserve exhaustive representative explanations: never shorten question-bank explanations or relevant lecture-note material merely to fit a table or reduce page count.
+
 Use the installed documents skill's render workflow to render the DOCX to PNGs. Inspect every page at 100% zoom for clipped text, missing glyphs, broken tables, displaced images, and bad page breaks. Rebuild and re-render until clean.
 
 ## Provenance labels
