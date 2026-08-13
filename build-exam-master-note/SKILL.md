@@ -7,6 +7,8 @@ description: "Build a verified Korean exam master-note DOCX from two user-provid
 
 Create one DOCX with three parts: lecture-order consolidation, prior-year exam order, and a completeness audit. Treat trust as the primary requirement. Never report a complete result until deterministic validation and rendered visual QA pass.
 
+The representative problem must be one coherent, completed problem, not a list of source questions. The representative explanation must absorb every required problem-bank explanation and relevant lecture-note meaning into one logical, systematic, complete answer. It is never a summary, excerpt collection, or source-by-source concatenation.
+
 ## Required inputs
 
 Require exactly two user-provided OneDrive folder links:
@@ -48,13 +50,13 @@ Run `scripts/normalize_sources.py` for each approved logical artifact. Record ha
 
 ### 2. Build the immutable ledger
 
-Create one entry for every source file, original question occurrence, original explanation, and image. Assign stable IDs and source locations. Never merge repeated occurrences across years.
+Create one entry for every source file, original question occurrence, original explanation, and image. Assign stable internal IDs and source locations. Never merge repeated occurrences across years. Keep technical IDs out of visible study content.
 
 Read [provenance-schema.md](references/provenance-schema.md) before creating ledger entries.
 
 ### 3. Build lecture-order consolidation
 
-Read [lecture-master-note-protocol.md](references/lecture-master-note-protocol.md). Detect the question-bank region conservatively. If an item might be a past question, include it as review-required instead of dropping it. Create complete representative types, but keep every year-specific original problem, answer, explanation, and image below the representative type.
+Read [lecture-master-note-protocol.md](references/lecture-master-note-protocol.md). Detect the question-bank region conservatively. If an item might be a past question, include it as review-required instead of dropping it. Before synthesis, atomize every problem element, original-explanation meaning, and relevant lecture-note meaning. Create complete representative types, keep every year-specific original problem, answer, explanation, and image below them, then independently reread the normalized source and map every newly found meaning. Any unmapped or unresolved atom blocks completion.
 
 ### 4. Build prior-year exam order
 
@@ -76,20 +78,22 @@ Use the installed documents skill's render workflow to render the DOCX to PNGs. 
 
 ## Provenance labels
 
-Use a label for every problem, choice, answer, explanation span, correction, and image:
+Use a plain-text label for every problem, choice, answer, explanation span, correction, and image. Show human-readable provenance only:
 
-- `[원문 · file · page · question ID]`: exact source text/image only.
-- `[AI 복원 · 기출 근거 IDs]`: reconstructed solely from cited past-question fragments.
-- `[족보 보충 · file · page]`: based on non-question lecture-note content.
-- `[단권화 보충 · representative ID]`: Part 2 supplement taken from Part 1.
+- `[원문 · file · page]`: exact source text/image only.
+- `[기출 통합 재구성 · years/files 참고]`: reconstructed solely from cited past-question fragments.
+- `[족보 참고 · file · page]`: based on non-question lecture-note content.
+- `[단권화 보충 · lecture unit · representative title]`: Part 2 supplement taken from Part 1.
 - `[AI 외부 보충 · authoritative source]`: verified textbook, society guideline, official material, or primary paper.
 - `[출처 확인 필요]`: no trustworthy basis; blocks completion.
 
 Never use `[원문]` after changing even one character. Keep a wrong or malformed original unchanged and add a separate sourced correction proposal.
 
+Do not display representative, question, image, atom, component, database, or audit IDs in headings, tables, provenance, captions, headers, or body text. Retain them in the ledger and non-visible OOXML metadata for deterministic verification.
+
 ## Completion statuses
 
-- `complete`: every file/page/question/image is accounted for; all provenance is valid; ledger and DOCX counts match; independent verification and visual QA pass.
+- `complete`: every file/page/question/image is accounted for; all required problem and explanation atoms are mapped; the independent source reread has no unresolved item; all provenance is valid; ledger and DOCX counts match; independent verification and visual QA pass.
 - `review_required`: output the useful draft plus precise audit findings and source-page evidence. Never call it complete.
 
 Persist manifest, ledger, normalized artifacts, and reports as checkpoints so interrupted runs can resume without redoing validated stages.

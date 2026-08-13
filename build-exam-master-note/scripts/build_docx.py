@@ -265,7 +265,9 @@ def provenance_label(
     provenance: list[dict[str, Any]],
     questions: dict[str, dict[str, Any]],
     sources: dict[str, dict[str, Any]],
+    representatives: dict[str, dict[str, Any]] | None = None,
 ) -> str:
+    representatives = representatives or {}
     labels: list[str] = []
     for source in provenance:
         kind = source.get("kind")
@@ -273,15 +275,26 @@ def provenance_label(
             question = questions.get(source.get("source_question_id"), {})
             artifact = sources.get(question.get("source_artifact_id"), {})
             labels.append(
-                f"[원문 · {artifact.get('file_name', '?')} · p.{question.get('source_page', '?')} · {question.get('id', '?')}]"
+                f"[원문 · {artifact.get('file_name', '?')} · {question.get('source_page', '?')}쪽]"
             )
         elif kind == "ai_reconstruction_from_questions":
-            labels.append("[AI 복원 · 기출 근거 " + ",".join(source.get("source_question_ids", [])) + "]")
+            linked = [questions.get(question_id, {}) for question_id in source.get("source_question_ids", [])]
+            years = [str(question.get("year")) + "년" for question in linked if question.get("year")]
+            files = [
+                sources.get(question.get("source_artifact_id"), {}).get("file_name")
+                for question in linked
+                if question.get("source_artifact_id")
+            ]
+            basis = "·".join(dict.fromkeys(years or [item for item in files if item])) or "기출"
+            labels.append(f"[기출 통합 재구성 · {basis} 기출 참고]")
         elif kind == "lecture_note_supplement":
             artifact = sources.get(source.get("source_artifact_id"), {})
-            labels.append(f"[족보 보충 · {artifact.get('file_name', '?')} · p.{source.get('source_page', '?')}]")
+            labels.append(f"[족보 참고 · {artifact.get('file_name', '?')} · {source.get('source_page', '?')}쪽]")
         elif kind == "master_note_supplement":
-            labels.append(f"[단권화 보충 · {source.get('representative_type_id', '?')}]")
+            representative = representatives.get(source.get("representative_type_id"), {})
+            labels.append(
+                f"[단권화 보충 · {representative.get('lecture_unit', '?')} · {representative.get('title', '?')}]"
+            )
         elif kind == "external_ai_supplement":
             labels.append(f"[AI 외부 보충 · {source.get('citation', '?')} · {source.get('locator', '?')}]")
         else:
@@ -301,6 +314,7 @@ def add_component(
     component: dict[str, Any],
     questions: dict[str, dict[str, Any]],
     sources: dict[str, dict[str, Any]],
+    representatives: dict[str, dict[str, Any]] | None = None,
     prefix: str = "",
 ) -> None:
     paragraph = next_paragraph(container)
@@ -310,7 +324,10 @@ def add_component(
         set_run_font(lead, size=BODY_SIZE_PT, bold=True)
     run = paragraph.add_run(component.get("text", ""))
     set_run_font(run, size=BODY_SIZE_PT)
-    add_plain_label(paragraph, provenance_label(component.get("provenance", []), questions, sources))
+    add_plain_label(
+        paragraph,
+        provenance_label(component.get("provenance", []), questions, sources, representatives),
+    )
 
 
 def add_labeled_text(container: Any, label: str, text: str, source_label: str = "") -> None:
@@ -329,7 +346,7 @@ def image_source_label(image: dict[str, Any], sources: dict[str, dict[str, Any]]
     artifact = sources.get(image.get("source_artifact_id"), {})
     provenance = image.get("provenance", [])
     if any(item.get("kind") == "original" for item in provenance):
-        return f"[원문 · {artifact.get('file_name', '?')} · p.{image.get('source_page', '?')} · {image.get('id', '?')}]"
+        return f"[원문 · {artifact.get('file_name', '?')} · {image.get('source_page', '?')}쪽]"
     return "[출처 확인 필요]"
 
 
@@ -338,17 +355,20 @@ def add_image_to_cell(cell: Any, image: dict[str, Any], sources: dict[str, dict[
     from docx.shared import Inches
 
     path = Path(image.get("path", ""))
+    artifact = sources.get(image.get("source_artifact_id"), {})
     paragraph = next_paragraph(cell)
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     style_paragraph(paragraph, after=3)
     if path.exists():
         run = paragraph.add_run()
         inline_shape = run.add_picture(str(path), width=Inches(6.55))
-        alt_text = f"{image.get('id', '이미지')} · {image_source_label(image, sources)}"
+        alt_text = f"문제 관련 이미지 · {image_source_label(image, sources)}"
         inline_shape._inline.docPr.set("descr", alt_text)
-        inline_shape._inline.docPr.set("title", str(image.get("id", "이미지")))
+        inline_shape._inline.docPr.set("title", "문제 관련 이미지")
     else:
-        run = paragraph.add_run(f"[이미지 파일 없음 · {image.get('id', '?')}]")
+        run = paragraph.add_run(
+            f"[이미지 파일 없음 · {artifact.get('file_name', '?')} · {image.get('source_page', '?')}쪽]"
+        )
         set_run_font(run, size=BODY_SIZE_PT, bold=True)
     caption = cell.add_paragraph()
     caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -398,6 +418,7 @@ def add_representative_table(
     questions: dict[str, dict[str, Any]],
     sources: dict[str, dict[str, Any]],
     images: dict[str, dict[str, Any]],
+    representatives: dict[str, dict[str, Any]],
 ) -> None:
     table = make_problem_table(document, f"representative:{representative.get('id', '?')}")
     left, right = table.rows[1].cells
@@ -405,9 +426,9 @@ def add_representative_table(
     clear_container(right)
 
     for component in representative.get("problem_components", []):
-        add_component(left, component, questions, sources)
+        add_component(left, component, questions, sources, representatives)
     for index, component in enumerate(representative.get("choice_components", []), start=1):
-        add_component(left, component, questions, sources, prefix=f"{index}. ")
+        add_component(left, component, questions, sources, representatives, prefix=f"{index}. ")
 
     q_type = representative.get("question_type", "")
     heading = "정답 및 선지별 완전 해설" if q_type == "객관식" else "완전 답안 및 해설"
@@ -417,15 +438,15 @@ def add_representative_table(
     set_run_font(head_run, size=10.5, bold=True)
 
     for component in representative.get("answer_components", []):
-        add_component(right, component, questions, sources, prefix="정답: ")
+        add_component(right, component, questions, sources, representatives, prefix="정답: ")
     if q_type == "객관식":
         for index, component in enumerate(representative.get("choice_components", []), start=1):
             verdict = component.get("verdict", "?")
-            add_component(right, component, questions, sources, prefix=f"선지 {index} · {verdict}: ")
+            add_component(right, component, questions, sources, representatives, prefix=f"선지 {index} · {verdict}: ")
             for rationale in component.get("rationale_components", []):
-                add_component(right, rationale, questions, sources, prefix="근거: ")
+                add_component(right, rationale, questions, sources, representatives, prefix="근거: ")
     for component in representative.get("explanation_components", []):
-        add_component(right, component, questions, sources)
+        add_component(right, component, questions, sources, representatives)
 
     linked = [questions[qid] for qid in representative.get("question_ids", []) if qid in questions]
     image_ids = [image_id for question in linked for image_id in question.get("image_ids", [])]
@@ -437,7 +458,7 @@ def add_representative_table(
 
 
 def exact_source_label(question: dict[str, Any], artifact: dict[str, Any]) -> str:
-    return f"[원문 · {artifact.get('file_name', '?')} · p.{question.get('source_page', '?')} · {question.get('id', '?')}]"
+    return f"[원문 · {artifact.get('file_name', '?')} · {question.get('source_page', '?')}쪽]"
 
 
 def add_source_occurrence(
@@ -449,12 +470,13 @@ def add_source_occurrence(
     location: str,
     supplements: list[dict[str, Any]] | None = None,
     conflict_status: str | None = None,
+    representatives: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     from docx.shared import Pt
 
     artifact = sources.get(question.get("source_artifact_id"), {})
     heading = document.add_heading(
-        f"{question.get('year', '?')} · {question.get('id')} · {artifact.get('file_name', '?')} p.{question.get('source_page', '?')}",
+        f"{question.get('year', '?')}년 · {artifact.get('file_name', '?')} · {question.get('source_page', '?')}쪽",
         level=3,
     )
     heading.paragraph_format.keep_with_next = True
@@ -474,7 +496,7 @@ def add_source_occurrence(
         run = label.add_run("검토·보충")
         set_run_font(run, size=10.5, bold=True)
         for component in supplements:
-            add_component(right, component, {}, sources)
+            add_component(right, component, {}, sources, representatives)
     if conflict_status not in {None, "none", "resolved"}:
         warning = next_paragraph(right)
         style_paragraph(warning, after=4)
@@ -519,6 +541,105 @@ def add_title_page(document: Any, ledger: dict[str, Any], status: str) -> None:
     subtitle_run.font.color.rgb = RGBColor.from_string("475467")
 
 
+def humanize_audit_text(
+    value: object,
+    sources: dict[str, dict[str, Any]],
+    questions: dict[str, dict[str, Any]],
+    images: dict[str, dict[str, Any]],
+    representatives: dict[str, dict[str, Any]],
+) -> str:
+    text = str(value)
+    replacements: dict[str, str] = {}
+    for source_id, source in sources.items():
+        replacements[source_id] = source.get("file_name", "원본 파일")
+    for question_id, question in questions.items():
+        artifact = sources.get(question.get("source_artifact_id"), {})
+        replacements[question_id] = (
+            f"{question.get('year', '?')}년 {artifact.get('file_name', '?')} {question.get('source_page', '?')}쪽"
+        )
+    for image_id, item in images.items():
+        artifact = sources.get(item.get("source_artifact_id"), {})
+        replacements[image_id] = f"{artifact.get('file_name', '?')} {item.get('source_page', '?')}쪽 이미지"
+    for rep_id, representative in representatives.items():
+        replacements[rep_id] = f"{representative.get('lecture_unit', '')} {representative.get('title', '')}".strip()
+    for internal_id in sorted(replacements, key=len, reverse=True):
+        text = text.replace(internal_id, replacements[internal_id])
+    return text
+
+
+def add_compact_audit(
+    document: Any,
+    ledger: dict[str, Any],
+    validation: dict[str, Any],
+    sources: dict[str, dict[str, Any]],
+    questions: dict[str, dict[str, Any]],
+    images: dict[str, dict[str, Any]],
+    representatives: dict[str, dict[str, Any]],
+) -> None:
+    table = document.add_table(rows=1, cols=5)
+    table.style = "Table Grid"
+    set_table_caption(table, "audit:coverage")
+    headers = ["대표문제", "문제 완전성", "해설 완전성", "미해결", "상태"]
+    for index, header in enumerate(headers):
+        table.rows[0].cells[index].text = header
+        set_cell_shading(table.rows[0].cells[index], "E8EEF5")
+    repeat_table_header(table.rows[0])
+    for summary in validation.get("representative_coverage", []):
+        cells = table.add_row().cells
+        values = [
+            " · ".join(filter(None, [summary.get("lecture_unit"), summary.get("title")])),
+            f"{summary.get('problem_mapped', 0)}/{summary.get('problem_required', 0)}",
+            f"{summary.get('explanation_mapped', 0)}/{summary.get('explanation_required', 0)}",
+            summary.get("unresolved", 0),
+            "완료" if summary.get("status") == "complete" else "검수 필요",
+        ]
+        for index, value in enumerate(values):
+            cells[index].text = str(value)
+            for paragraph in cells[index].paragraphs:
+                style_paragraph(paragraph)
+                for run in paragraph.runs:
+                    set_run_font(run, size=BODY_SIZE_PT)
+    set_table_geometry(table, [3300, 1740, 1740, 1200, 1860])
+
+    review_summaries = [
+        summary
+        for summary in validation.get("representative_coverage", [])
+        if summary.get("status") != "complete"
+    ]
+    findings = [
+        finding
+        for finding in ledger.get("audit_findings", [])
+        if finding.get("severity") == "blocking" and finding.get("status") != "resolved"
+    ]
+    if not findings and not review_summaries:
+        return
+    heading = document.add_heading("검수 필요 사항", level=2)
+    heading.paragraph_format.keep_with_next = True
+    for summary in review_summaries:
+        paragraph = document.add_paragraph()
+        style_paragraph(paragraph)
+        detail = (
+            f"{summary.get('lecture_unit', '')} · {summary.get('title', '')}: "
+            f"문제 의미 반영 {summary.get('problem_mapped', 0)}/{summary.get('problem_required', 0)}, "
+            f"해설 의미 반영 {summary.get('explanation_mapped', 0)}/{summary.get('explanation_required', 0)}, "
+            f"미해결 {summary.get('unresolved', 0)}건"
+        )
+        run = paragraph.add_run(detail)
+        set_run_font(run, size=BODY_SIZE_PT)
+    for finding in findings:
+        locations = ", ".join(
+            humanize_audit_text(item, sources, questions, images, representatives)
+            for item in finding.get("source_locations", [])
+        )
+        message = humanize_audit_text(
+            finding.get("message", "확인이 필요합니다."), sources, questions, images, representatives
+        )
+        paragraph = document.add_paragraph()
+        style_paragraph(paragraph)
+        run = paragraph.add_run(message + (f" · {locations}" if locations else ""))
+        set_run_font(run, size=BODY_SIZE_PT)
+
+
 def build_document(ledger: dict[str, Any], template: Path | None, status: str) -> Any:
     require_docx()
     from docx import Document
@@ -531,6 +652,8 @@ def build_document(ledger: dict[str, Any], template: Path | None, status: str) -
     questions = {item["id"]: item for item in ledger.get("question_occurrences", [])}
     images = {item["id"]: item for item in ledger.get("images", [])}
     representatives = ledger.get("representative_types", [])
+    representative_map = {item["id"]: item for item in representatives}
+    validation = validate_ledger(ledger)
 
     first_header = representatives[0].get("lecture_unit", "강의 순서 단권화") if representatives else "강의 순서 단권화"
     add_section(document, first_header)
@@ -542,16 +665,23 @@ def build_document(ledger: dict[str, Any], template: Path | None, status: str) -
             add_section(document, lecture_unit)
             current_unit = lecture_unit
         document.add_heading(
-            f"{lecture_unit} · {representative.get('title', '')} ({representative.get('id')})",
+            f"{lecture_unit} · {representative.get('title', '')}",
             level=2,
         ).paragraph_format.keep_with_next = True
         document.add_heading("대표 문제와 완전 해설", level=3).paragraph_format.keep_with_next = True
-        add_representative_table(document, representative, questions, sources, images)
+        add_representative_table(document, representative, questions, sources, images, representative_map)
         document.add_heading("연도별 원문", level=3).paragraph_format.keep_with_next = True
         linked = [questions[qid] for qid in representative.get("question_ids", []) if qid in questions]
         linked.sort(key=lambda item: (item.get("year") or 9999, item.get("source_order") or 9999))
         for question in linked:
-            add_source_occurrence(document, question, sources, images, location=f"part1:{representative.get('id')}")
+            add_source_occurrence(
+                document,
+                question,
+                sources,
+                images,
+                location=f"part1:{representative.get('id')}",
+                representatives=representative_map,
+            )
 
     add_section(document, "작년 기출 실전 순서")
     document.add_heading("제2부. 작년 기출 실전 순서", level=1)
@@ -567,39 +697,20 @@ def build_document(ledger: dict[str, Any], template: Path | None, status: str) -
                     location=f"part2:{entry.get('sequence')}",
                     supplements=entry.get("supplement_components", []),
                     conflict_status=entry.get("conflict_status"),
+                    representatives=representative_map,
                 )
 
     add_section(document, "완전성 감사표")
     document.add_heading("제3부. 완전성 감사표", level=1)
-    counts = ledger.get("verification_counts", {})
-    document.add_paragraph(
-        " · ".join(f"{key}: {value}" for key, value in counts.items())
-        or "검증 수치는 독립 검증 보고서에서 채워집니다."
+    add_compact_audit(
+        document,
+        ledger,
+        validation,
+        sources,
+        questions,
+        images,
+        representative_map,
     )
-    findings = ledger.get("audit_findings", [])
-    table = document.add_table(rows=1, cols=4)
-    table.style = "Table Grid"
-    set_table_caption(table, "audit:findings")
-    headers = ["심각도", "코드", "내용", "원본 위치"]
-    for index, header in enumerate(headers):
-        table.rows[0].cells[index].text = header
-        set_cell_shading(table.rows[0].cells[index], "E8EEF5")
-    repeat_table_header(table.rows[0])
-    for finding in findings:
-        cells = table.add_row().cells
-        values = [
-            finding.get("severity", ""),
-            finding.get("code", ""),
-            finding.get("message", ""),
-            ", ".join(map(str, finding.get("source_locations", []))),
-        ]
-        for index, value in enumerate(values):
-            cells[index].text = str(value)
-            for paragraph in cells[index].paragraphs:
-                style_paragraph(paragraph)
-                for run in paragraph.runs:
-                    set_run_font(run, size=BODY_SIZE_PT)
-    set_table_geometry(table, [1260, 1800, 4740, 2040])
     return document
 
 

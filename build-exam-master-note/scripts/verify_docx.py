@@ -14,7 +14,8 @@ from common import load_json, save_json
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-NS = {"w": W_NS, "a": A_NS, "r": R_NS}
+WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+NS = {"w": W_NS, "a": A_NS, "r": R_NS, "wp": WP_NS}
 
 
 def attr(name: str) -> str:
@@ -145,7 +146,7 @@ def verify_sections(root: ElementTree.Element, layout: dict[str, Any], ledger: d
 
 
 def verify_plain_provenance(root: ElementTree.Element, errors: list[str]) -> None:
-    prefixes = ("[원문", "[AI 복원", "[족보 보충", "[단권화 보충", "[AI 외부 보충", "[출처 확인 필요")
+    prefixes = ("[원문", "[기출 통합 재구성", "[족보 참고", "[단권화 보충", "[AI 외부 보충", "[출처 확인 필요")
     for run in root.findall(".//w:r", NS):
         text = "".join(node.text or "" for node in run.findall(".//w:t", NS))
         if not text.lstrip().startswith(prefixes):
@@ -153,6 +154,73 @@ def verify_plain_provenance(root: ElementTree.Element, errors: list[str]) -> Non
         r_pr = run.find("./w:rPr", NS)
         if r_pr is not None and r_pr.find("./w:color", NS) is not None:
             errors.append(f"provenance text uses color formatting: {text[:40]}")
+
+
+def verify_no_visible_technical_ids(
+    root: ElementTree.Element,
+    parts: dict[str, ElementTree.Element],
+    ledger: dict[str, Any],
+    errors: list[str],
+) -> None:
+    internal_ids = {
+        str(item.get("id"))
+        for field in (
+            "source_artifacts",
+            "question_occurrences",
+            "images",
+            "representative_types",
+            "semantic_atoms",
+            "semantic_coverage",
+            "second_pass_reviews",
+            "audit_findings",
+        )
+        for item in ledger.get(field, [])
+        if item.get("id")
+    }
+    generated_texts: list[str] = []
+    for paragraph in root.findall(".//w:p", NS):
+        text = visible_text(paragraph).strip()
+        style = paragraph.find("./w:pPr/w:pStyle", NS)
+        style_name = style.get(attr("val"), "") if style is not None else ""
+        if style_name.startswith("Heading"):
+            generated_texts.append(text)
+        for run in paragraph.findall("./w:r", NS):
+            run_text = "".join(node.text or "" for node in run.findall(".//w:t", NS))
+            if run_text.lstrip().startswith("["):
+                generated_texts.append(run_text)
+    audit = next(
+        (table for table in root.findall(".//w:tbl", NS) if table_caption(table) == "audit:coverage"),
+        None,
+    )
+    if audit is not None:
+        generated_texts.append(visible_text(audit))
+    generated_texts.extend(visible_text(part) for part in parts.values())
+    for doc_pr in root.findall(".//wp:docPr", NS):
+        generated_texts.extend([doc_pr.get("title", ""), doc_pr.get("descr", "")])
+    for internal_id in sorted(internal_ids):
+        if any(internal_id in generated for generated in generated_texts):
+            errors.append(f"technical ID is visible in generated study UI: {internal_id}")
+
+
+def verify_compact_audit(root: ElementTree.Element, validation: dict[str, Any], errors: list[str]) -> None:
+    table = next(
+        (item for item in root.findall(".//w:tbl", NS) if table_caption(item) == "audit:coverage"),
+        None,
+    )
+    if table is None:
+        errors.append("missing compact semantic coverage audit")
+        return
+    text = visible_text(table)
+    if any(label not in text for label in ("문제 완전성", "해설 완전성", "미해결", "상태")):
+        errors.append("compact audit is missing required columns")
+    for summary in validation.get("representative_coverage", []):
+        required = (
+            f"{summary.get('problem_mapped', 0)}/{summary.get('problem_required', 0)}",
+            f"{summary.get('explanation_mapped', 0)}/{summary.get('explanation_required', 0)}",
+            summary.get("title", ""),
+        )
+        if any(str(value) not in text for value in required):
+            errors.append(f"compact audit totals missing for {summary.get('representative_type_id')}")
 
 
 def verify_docx(docx_path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
@@ -163,6 +231,12 @@ def verify_docx(docx_path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
     questions = ledger.get("question_occurrences", [])
     images = ledger.get("images", [])
     layout = inspect_layout(root, parts)
+    from validate_ledger import validate_ledger
+
+    validation = validate_ledger(ledger)
+    if not validation.get("valid"):
+        details = "; ".join(validation.get("errors", [])[:5])
+        errors.append(f"ledger semantic completeness validation failed: {details}")
 
     for required_heading in (
         "제1부. 강의 순서 단권화",
@@ -174,8 +248,6 @@ def verify_docx(docx_path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
 
     for question in questions:
         question_id = question.get("id", "<missing>")
-        if question_id not in text:
-            errors.append(f"missing question ID in DOCX: {question_id}")
         for field in ("original_problem", "original_answer", "original_explanation"):
             value = question.get(field, "")
             if value and value not in text:
@@ -200,32 +272,36 @@ def verify_docx(docx_path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
         image_id = image.get("id", "<missing>")
         if image.get("word_location"):
             included_images += 1
-            if image_id not in text:
-                errors.append(f"missing image caption/ID in DOCX: {image_id}")
+            artifact = next(
+                (source for source in ledger.get("source_artifacts", []) if source.get("id") == image.get("source_artifact_id")),
+                {},
+            )
+            label = f"[원문 · {artifact.get('file_name', '?')} · {image.get('source_page', '?')}쪽]"
+            if label not in text:
+                errors.append(f"missing human-readable image provenance for {image_id}")
         elif image.get("status") != "review_required":
             errors.append(f"image lacks Word location and review status: {image_id}")
     if drawing_count < included_images:
         errors.append(f"DOCX contains {drawing_count} drawings but ledger expects at least {included_images} included images")
 
-    part_two = text.find("제2부. 작년 기출 실전 순서")
-    part_three = text.find("제3부. 완전성 감사표")
-    if part_two >= 0 and part_three > part_two:
-        prior_text = text[part_two:part_three]
-        previous = -1
-        for entry in ledger.get("prior_year_sequence", []):
-            positions = [prior_text.find(question_id) for question_id in entry.get("question_ids", [])]
-            if any(position < 0 for position in positions):
-                errors.append(f"prior-year entry {entry.get('sequence')} is missing question IDs")
-                continue
-            current = min(positions)
-            if current <= previous:
-                errors.append("prior-year question order differs from ledger")
-                break
-            previous = current
+    actual_prior = [
+        table_caption(table)
+        for table in layout["tables"]
+        if table_caption(table).startswith("occurrence:part2:")
+    ]
+    expected_prior = [
+        f"occurrence:part2:{entry.get('sequence')}:{question_id}"
+        for entry in ledger.get("prior_year_sequence", [])
+        for question_id in entry.get("question_ids", [])
+    ]
+    if actual_prior != expected_prior:
+        errors.append("prior-year question order differs from ledger metadata")
 
     verify_geometry(layout, ledger, errors)
     verify_sections(root, layout, ledger, errors)
     verify_plain_provenance(root, errors)
+    verify_no_visible_technical_ids(root, parts, ledger, errors)
+    verify_compact_audit(root, validation, errors)
 
     blocking = [
         finding

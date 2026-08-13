@@ -24,10 +24,12 @@ For each representative type:
 
 - Put the complete reconstructed problem and every distinct choice or subquestion in the left cell.
 - Put the complete explanation in the right cell.
+- Treat both cells as coherent reconstructions. Do not list source problems or concatenate source explanations.
 - For objective questions, include every choice's O/X verdict and detailed rationale.
 - For essay questions, include the complete answer and every supported scoring point.
 - For short-answer questions, show the answer followed by its complete basis.
 - Exhaustively integrate all linked question-bank explanations and all relevant lecture-note content. Do not output a short or key-point-only explanation.
+- Every required semantic atom must map to an internal component rendered in the applicable cell before the document can be complete.
 
 For each year-specific occurrence:
 
@@ -48,6 +50,7 @@ For each year-specific occurrence:
 - Do not use colored text, badges, icons, fills, or borders for provenance.
 - Place each label immediately after or directly below the content it supports.
 - Never label modified text as `[원문]`.
+- Show only human-readable file/year/page, lecture unit, and representative title in provenance. Never display internal representative, question, image, atom, component, or audit IDs.
 - Preserve questionable original answers unchanged under `원문 답`.
 - Put separate sourced corrections or supplementation under `검토·보충`.
 - When they conflict, display `원문 답과 보충 판정 불일치` and retain both.

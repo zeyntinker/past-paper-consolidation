@@ -20,10 +20,12 @@ Never discard malformed, incomplete, duplicated, or apparently incorrect materia
 
 Group only questions with the same tested concept and intent. Do not merge merely because they share a broad chapter.
 
+The representative problem and explanation are synthesis surfaces, not places to list originals. Before writing either one, atomize every source problem element, every original-explanation meaning, and every relevant lecture-note meaning using the ledger schema.
+
 For each group:
 
-1. Create one complete synthetic problem.
-2. Mark reconstructed text as `[AI 복원 · 기출 근거 IDs]`.
+1. Create one coherent, complete synthetic problem. It may reorganize supported wording and order, but it must not add a new tested point.
+2. Mark reconstructed text with human-readable source years/files, never internal IDs.
 3. Put every year-specific source occurrence below it with `[원문]` labels.
 4. Show all years, including exact repeats.
 
@@ -34,6 +36,8 @@ For each group:
 - Do not force four or five choices.
 - Give each choice a verdict and explicit reason.
 - Explain why wrong choices are wrong, not only why the answer is right.
+- Map every source stem, condition, qualifier, number, choice, and problem-linked image finding to the completed problem.
+- Merge semantically duplicate choices once with every source retained in the ledger. Preserve differences in condition, scope, exception, or detail.
 
 ### Essay questions
 
@@ -48,6 +52,8 @@ When a full problem cannot be safely reconstructed, create a keyword representat
 
 ## Explanation completion
 
+Create one logical and systematic complete answer that absorbs all required source meanings. Do not summarize, excerpt, concatenate source blocks, or organize the answer source by source.
+
 Use sources in this order:
 
 1. Original question-bank explanations.
@@ -56,11 +62,19 @@ Use sources in this order:
 4. Verified authoritative external sources with `[AI 외부 보충 · source]`.
 5. `[출처 확인 필요]` if no trustworthy basis exists.
 
+External supplementation fills only a necessary gap after the supplied corpus is exhausted. Do not expand the answer into unrelated encyclopedic material.
+
+## Double-pass completeness audit
+
+Pass 1 atomizes sources, synthesizes the problem and answer, and maps every required atom to an internal output component ID. Pass 2 independently rereads the normalized source pages and searches for omitted choices, subquestions, meanings, qualifiers, conditions, exceptions, numbers, image findings, and conflicts.
+
+Any new meaning found in Pass 2 becomes an atom and must be mapped. An unmapped atom, pending relevance decision, hidden conflict, incomplete reread, unreadable page/image, or unverifiable required supplement blocks `complete`.
+
 If an original answer appears wrong, preserve it and add a separate sourced correction proposal. If sources disagree, present the disagreement and keep the run review-required.
 
 ## Images
 
-- Use original question-bank images with `[원문]` and an image ID.
+- Use original question-bank images with `[원문]`; keep the image ID only in the ledger and non-visible DOCX metadata.
 - Use a relevant lecture-note image only when its connection is supported; label it `[족보 보충]`.
 - Keep uncertain images as whole-page evidence in the audit.
 - Never regenerate a missing diagnostic or exam image and present it as original.

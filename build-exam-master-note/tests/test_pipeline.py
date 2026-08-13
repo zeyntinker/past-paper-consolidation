@@ -17,7 +17,7 @@ from build_docx import build_document  # noqa: E402
 from build_manifest import approve_manifest, build_manifest, verify_approval  # noqa: E402
 from normalize_sources import normalize, text_integrity_findings  # noqa: E402
 from validate_ledger import validate_ledger  # noqa: E402
-from verify_docx import verify_docx  # noqa: E402
+from verify_docx import read_parts, verify_docx, visible_text  # noqa: E402
 
 
 def original(question_id: str, field: str, choice_index: int | None = None) -> list[dict]:
@@ -29,6 +29,245 @@ def original(question_id: str, field: str, choice_index: int | None = None) -> l
     if choice_index is not None:
         source["choice_index"] = choice_index
     return [source]
+
+
+def attach_semantic_contract(ledger: dict) -> dict:
+    questions = {item["id"]: item for item in ledger.get("question_occurrences", [])}
+    images = {item["id"]: item for item in ledger.get("images", [])}
+    atoms: list[dict] = []
+    mappings: list[dict] = []
+    reviews: list[dict] = []
+
+    for rep_index, representative in enumerate(ledger.get("representative_types", []), start=1):
+        rep_id = representative["id"]
+        component_index = 0
+        atom_index = 0
+
+        def register(component: dict, target_kind: str, category: str, atom_type: str) -> None:
+            nonlocal component_index, atom_index
+            component_index += 1
+            atom_index += 1
+            component["id"] = f"C-{rep_index}-{component_index}"
+            provenance = component.get("provenance", [{}])[0]
+            question_id = provenance.get("source_question_id")
+            if not question_id:
+                question_ids = provenance.get("source_question_ids", representative.get("question_ids", []))
+                question_id = question_ids[0] if question_ids else None
+            question = questions.get(question_id, {})
+            source_id = provenance.get("source_artifact_id") or question.get("source_artifact_id")
+            source_page = provenance.get("source_page") or question.get("source_page")
+            source_field = provenance.get("source_field")
+            source_text = component.get("text", "")
+            if question and source_field == "original_choices":
+                source_text = question["original_choices"][provenance["choice_index"]]
+            elif question and source_field:
+                source_text = question.get(source_field, source_text)
+            elif question and category == "problem":
+                source_text = question.get("original_problem", source_text)
+            atom = {
+                "id": f"A-{rep_index}-{atom_index}",
+                "representative_type_id": rep_id,
+                "category": category,
+                "atom_type": atom_type,
+                "source_artifact_id": source_id,
+                "source_page": source_page,
+                "text": source_text,
+                "provenance_kind": provenance.get("kind", "source_unverified"),
+                "relevance_status": "required",
+                "status": "verified",
+            }
+            if category == "external_supplement":
+                atom.pop("source_artifact_id", None)
+                atom.pop("source_page", None)
+                atom["citation"] = provenance.get("citation")
+                atom["locator"] = provenance.get("locator")
+            if category == "problem" and question_id:
+                atom["source_question_id"] = question_id
+                atom["source_field"] = source_field or "original_problem"
+                if source_field == "original_choices":
+                    atom["choice_index"] = provenance["choice_index"]
+            if category == "original_explanation":
+                atom["source_question_id"] = question_id
+                atom["source_field"] = source_field or "original_explanation"
+            atoms.append(atom)
+            mappings.append(
+                {
+                    "id": f"M-{rep_index}-{atom_index}",
+                    "atom_id": atom["id"],
+                    "representative_type_id": rep_id,
+                    "target_kind": target_kind,
+                    "target_component_ids": [component["id"]],
+                    "integration_mode": "exact" if provenance.get("kind") == "original" else "synthesized",
+                    "status": "covered",
+                }
+            )
+
+        for component in representative.get("problem_components", []):
+            register(component, "problem_component", "problem", "stem")
+        for component in representative.get("choice_components", []):
+            register(component, "choice_component", "problem", "choice")
+            for rationale in component.get("rationale_components", []):
+                kind = rationale.get("provenance", [{}])[0].get("kind")
+                category = "original_explanation" if kind == "original" else ("external_supplement" if kind == "external_ai_supplement" else "lecture_note")
+                register(rationale, "rationale_component", category, "rationale")
+        for component in representative.get("answer_components", []):
+            kind = component.get("provenance", [{}])[0].get("kind")
+            category = "original_explanation" if kind == "original" else ("external_supplement" if kind == "external_ai_supplement" else "lecture_note")
+            register(component, "answer_component", category, "answer")
+        for component in representative.get("explanation_components", []):
+            kind = component.get("provenance", [{}])[0].get("kind")
+            category = "original_explanation" if kind == "original" else ("external_supplement" if kind == "external_ai_supplement" else "lecture_note")
+            register(component, "explanation_component", category, "explanation")
+
+        represented_parts = {
+            (item.get("source_question_id"), item.get("source_field"), item.get("choice_index"))
+            for item in atoms
+            if item["representative_type_id"] == rep_id
+        }
+
+        def add_source_atom(
+            question_id: str,
+            source_field: str,
+            text: str,
+            target_kind: str,
+            target_component_id: str,
+            choice_index: int | None = None,
+        ) -> None:
+            nonlocal atom_index
+            key = (question_id, source_field, choice_index)
+            if key in represented_parts or not text:
+                return
+            atom_index += 1
+            question = questions[question_id]
+            atom = {
+                "id": f"A-{rep_index}-{atom_index}",
+                "representative_type_id": rep_id,
+                "category": "problem" if source_field in {"original_problem", "original_choices"} else "original_explanation",
+                "atom_type": "choice" if source_field == "original_choices" else ("stem" if source_field == "original_problem" else "explanation"),
+                "source_artifact_id": question["source_artifact_id"],
+                "source_page": question["source_page"],
+                "source_question_id": question_id,
+                "source_field": source_field,
+                "text": text,
+                "provenance_kind": "original",
+                "relevance_status": "required",
+                "status": "verified",
+            }
+            if choice_index is not None:
+                atom["choice_index"] = choice_index
+            atoms.append(atom)
+            mappings.append(
+                {
+                    "id": f"M-{rep_index}-{atom_index}",
+                    "atom_id": atom["id"],
+                    "representative_type_id": rep_id,
+                    "target_kind": target_kind,
+                    "target_component_ids": [target_component_id],
+                    "integration_mode": "synthesized",
+                    "status": "covered",
+                }
+            )
+            represented_parts.add(key)
+
+        problem_target = representative["problem_components"][0]["id"]
+        answer_targets = representative.get("answer_components", [])
+        explanation_targets = representative.get("explanation_components", [])
+        fallback_answer_kind = "answer_component" if answer_targets else "explanation_component"
+        fallback_answer_id = (answer_targets or explanation_targets)[0]["id"]
+        for question_id in representative.get("question_ids", []):
+            question = questions[question_id]
+            add_source_atom(question_id, "original_problem", question["original_problem"], "problem_component", problem_target)
+            for choice_index, choice in enumerate(question.get("original_choices", [])):
+                target = next(
+                    (item["id"] for item in representative.get("choice_components", []) if item.get("text") == choice),
+                    problem_target,
+                )
+                kind = "choice_component" if target != problem_target else "problem_component"
+                add_source_atom(question_id, "original_choices", choice, kind, target, choice_index)
+            add_source_atom(
+                question_id,
+                "original_answer",
+                question["original_answer"],
+                fallback_answer_kind,
+                fallback_answer_id,
+            )
+            explanation_target = next(
+                (
+                    item["id"]
+                    for item in explanation_targets
+                    if item.get("text") == question.get("original_explanation")
+                ),
+                fallback_answer_id,
+            )
+            explanation_kind = (
+                "explanation_component"
+                if any(item["id"] == explanation_target for item in explanation_targets)
+                else fallback_answer_kind
+            )
+            add_source_atom(
+                question_id,
+                "original_explanation",
+                question["original_explanation"],
+                explanation_kind,
+                explanation_target,
+            )
+
+        for question_id in representative.get("question_ids", []):
+            for image_id in questions.get(question_id, {}).get("image_ids", []):
+                image = images[image_id]
+                atom_index += 1
+                atom = {
+                    "id": f"A-{rep_index}-{atom_index}",
+                    "representative_type_id": rep_id,
+                    "category": "problem",
+                    "atom_type": "image",
+                    "source_artifact_id": image["source_artifact_id"],
+                    "source_page": image["source_page"],
+                    "image_id": image_id,
+                    "provenance_kind": "original",
+                    "relevance_status": "required",
+                    "status": "verified",
+                }
+                atoms.append(atom)
+                mappings.append(
+                    {
+                        "id": f"M-{rep_index}-{atom_index}",
+                        "atom_id": atom["id"],
+                        "representative_type_id": rep_id,
+                        "target_kind": "problem_component",
+                        "target_component_ids": [representative["problem_components"][0]["id"]],
+                        "integration_mode": "synthesized",
+                        "status": "covered",
+                    }
+                )
+
+        reviewed: dict[str, set[int]] = {}
+        for question_id in representative.get("question_ids", []):
+            question = questions[question_id]
+            reviewed.setdefault(question["source_artifact_id"], set()).add(question["source_page"])
+        for atom in [item for item in atoms if item["representative_type_id"] == rep_id]:
+            if atom["category"] != "external_supplement":
+                reviewed.setdefault(atom["source_artifact_id"], set()).add(atom["source_page"])
+        reviews.append(
+            {
+                "id": f"P2-{rep_index}",
+                "representative_type_id": rep_id,
+                "reviewed_sources": [
+                    {"source_artifact_id": source_id, "pages": sorted(pages)}
+                    for source_id, pages in sorted(reviewed.items())
+                ],
+                "discovered_atom_ids": [],
+                "unresolved_atom_ids": [],
+                "notes": "정규화 원문을 독립적으로 재검토함",
+                "status": "complete",
+            }
+        )
+
+    ledger["schema_version"] = 2
+    ledger["semantic_atoms"] = atoms
+    ledger["semantic_coverage"] = mappings
+    ledger["second_pass_reviews"] = reviews
+    return ledger
 
 
 def valid_ledger() -> dict:
@@ -123,17 +362,20 @@ def valid_ledger() -> dict:
             }
         ],
         "choice_components": [
-            {"text": "A 선지", "provenance": original("Q-1", "original_choices", 0), "verdict": "O", "rationale_components": [rationale]},
-            {"text": "B 선지", "provenance": original("Q-1", "original_choices", 1), "verdict": "X", "rationale_components": [rationale]},
-            {"text": "C 선지", "provenance": original("Q-2", "original_choices", 1), "verdict": "X", "rationale_components": [rationale]},
+            {"text": "A 선지", "provenance": original("Q-1", "original_choices", 0), "verdict": "O", "rationale_components": [copy.deepcopy(rationale)]},
+            {"text": "B 선지", "provenance": original("Q-1", "original_choices", 1), "verdict": "X", "rationale_components": [copy.deepcopy(rationale)]},
+            {"text": "C 선지", "provenance": original("Q-2", "original_choices", 1), "verdict": "X", "rationale_components": [copy.deepcopy(rationale)]},
+        ],
+        "answer_components": [
+            {"text": "정답 A", "provenance": original("Q-1", "original_answer")},
         ],
         "explanation_components": [
             {"text": "A가 옳다.", "provenance": original("Q-1", "original_explanation")},
             {"text": "해설 복기 불완전", "provenance": original("Q-2", "original_explanation")},
-            rationale,
+            copy.deepcopy(rationale),
         ],
     }
-    return {
+    ledger = {
         "schema_version": 1,
         "manifest_fingerprint": "f" * 64,
         "approved_manifest_fingerprint": "f" * 64,
@@ -162,6 +404,7 @@ def valid_ledger() -> dict:
         "audit_findings": [],
         "verification_counts": {"원문 문항": 2, "이미지": 0},
     }
+    return attach_semantic_contract(ledger)
 
 
 class ManifestTests(unittest.TestCase):
@@ -233,7 +476,108 @@ class LedgerTests(unittest.TestCase):
         ledger["representative_types"][0]["choice_components"].pop()
         report = validate_ledger(ledger)
         self.assertFalse(report["valid"])
-        self.assertTrue(any("omits original objective choices" in error for error in report["errors"]))
+        self.assertTrue(any("unknown or mismatched component" in error for error in report["errors"]))
+
+    def test_unmapped_problem_atom_is_rejected(self) -> None:
+        ledger = valid_ledger()
+        atom = next(item for item in ledger["semantic_atoms"] if item["category"] == "problem")
+        ledger["semantic_coverage"] = [
+            item for item in ledger["semantic_coverage"] if item["atom_id"] != atom["id"]
+        ]
+        report = validate_ledger(ledger)
+        self.assertFalse(report["valid"])
+        self.assertTrue(any(f"{atom['id']} has 0 coverage" in error for error in report["errors"]))
+
+    def test_missing_source_choice_atom_is_rejected(self) -> None:
+        ledger = valid_ledger()
+        atom = next(
+            item
+            for item in ledger["semantic_atoms"]
+            if item.get("source_question_id") == "Q-2"
+            and item.get("source_field") == "original_choices"
+            and item.get("choice_index") == 0
+        )
+        ledger["semantic_atoms"] = [item for item in ledger["semantic_atoms"] if item["id"] != atom["id"]]
+        ledger["semantic_coverage"] = [
+            item for item in ledger["semantic_coverage"] if item["atom_id"] != atom["id"]
+        ]
+        report = validate_ledger(ledger)
+        self.assertFalse(report["valid"])
+        self.assertTrue(any("Q-2.original_choices[0]" in error for error in report["errors"]))
+
+    def test_unmapped_explanation_and_lecture_atoms_are_rejected(self) -> None:
+        for category in ("original_explanation", "lecture_note"):
+            ledger = valid_ledger()
+            atom = next(item for item in ledger["semantic_atoms"] if item["category"] == category)
+            ledger["semantic_coverage"] = [
+                item for item in ledger["semantic_coverage"] if item["atom_id"] != atom["id"]
+            ]
+            report = validate_ledger(ledger)
+            self.assertFalse(report["valid"])
+            self.assertTrue(any(f"{atom['id']} has 0 coverage" in error for error in report["errors"]))
+
+    def test_second_pass_and_ambiguous_relevance_are_blocking(self) -> None:
+        ledger = valid_ledger()
+        ledger["second_pass_reviews"][0]["reviewed_sources"][0]["pages"] = []
+        ledger["semantic_atoms"][0]["relevance_status"] = "review_required"
+        report = validate_ledger(ledger)
+        self.assertFalse(report["valid"])
+        self.assertTrue(any("ambiguous relevance" in error for error in report["errors"]))
+        self.assertTrue(any("second-pass reread misses source pages" in error for error in report["errors"]))
+
+    def test_duplicate_atoms_can_share_one_synthesized_component(self) -> None:
+        ledger = valid_ledger()
+        atoms = [item for item in ledger["semantic_atoms"] if item["category"] == "lecture_note"][:2]
+        self.assertEqual(2, len(atoms))
+        mappings = {
+            item["atom_id"]: item for item in ledger["semantic_coverage"] if item["atom_id"] in {a["id"] for a in atoms}
+        }
+        target = mappings[atoms[0]["id"]]["target_component_ids"]
+        for atom in atoms:
+            atom["duplicate_group_id"] = "DUP-1"
+            mappings[atom["id"]]["target_component_ids"] = target
+            mappings[atom["id"]]["target_kind"] = mappings[atoms[0]["id"]]["target_kind"]
+            mappings[atom["id"]]["integration_mode"] = "duplicate_merged"
+        report = validate_ledger(ledger)
+        self.assertTrue(report["valid"], report["errors"])
+
+    def test_conflicting_conditions_must_remain_split(self) -> None:
+        ledger = valid_ledger()
+        atoms = [item for item in ledger["semantic_atoms"] if item["category"] == "problem"][:2]
+        mappings = {
+            item["atom_id"]: item for item in ledger["semantic_coverage"] if item["atom_id"] in {a["id"] for a in atoms}
+        }
+        for atom in atoms:
+            atom["conflict_group_id"] = "CONFLICT-1"
+            mappings[atom["id"]]["integration_mode"] = "conditional_split"
+        self.assertTrue(validate_ledger(ledger)["valid"])
+        mappings[atoms[1]["id"]]["target_component_ids"] = mappings[atoms[0]["id"]]["target_component_ids"]
+        mappings[atoms[1]["id"]]["target_kind"] = mappings[atoms[0]["id"]]["target_kind"]
+        report = validate_ledger(ledger)
+        self.assertFalse(report["valid"])
+        self.assertTrue(any("not split" in error for error in report["errors"]))
+
+    def test_external_supplement_requires_authoritative_locator(self) -> None:
+        ledger = valid_ledger()
+        ledger["representative_types"][0]["explanation_components"].append(
+            {
+                "text": "족보에 없는 필수 공백만 외부 근거로 보충",
+                "provenance": [
+                    {
+                        "kind": "external_ai_supplement",
+                        "citation": "공식 학회 지침",
+                        "locator": "https://example.org/guideline",
+                    }
+                ],
+            }
+        )
+        attach_semantic_contract(ledger)
+        self.assertTrue(validate_ledger(ledger)["valid"])
+        external = next(item for item in ledger["semantic_atoms"] if item["category"] == "external_supplement")
+        external.pop("locator")
+        report = validate_ledger(ledger)
+        self.assertFalse(report["valid"])
+        self.assertTrue(any("external atom lacks" in error for error in report["errors"]))
 
 
 class NormalizationTests(unittest.TestCase):
@@ -299,6 +643,7 @@ class DocxTests(unittest.TestCase):
                 }
             ]
             ledger["question_occurrences"][0]["image_ids"] = ["IMG-1"]
+            attach_semantic_contract(ledger)
             output, report = self.save_and_verify(ledger, Path(tmp))
             self.assertTrue(report["valid"], report["errors"])
             self.assertGreaterEqual(report["counts"]["drawings_found"], 1)
@@ -331,6 +676,48 @@ class DocxTests(unittest.TestCase):
             self.assertIn("작년 기출 실전 순서", header_xml)
             self.assertNotIn("Page", footer_xml)
             self.assertNotIn("PAGE", footer_xml)
+            document_root, _ = read_parts(output)
+            learner_text = visible_text(document_root)
+            self.assertNotIn("Q-1", learner_text)
+            self.assertNotIn("R-1", learner_text)
+            self.assertNotIn("IMG-1", learner_text)
+            self.assertIn("[원문 · 240901_0교시.pdf · 2쪽]", learner_text)
+            self.assertIn("[기출 통합 재구성 · 2021년·2024년 기출 참고]", learner_text)
+            self.assertIn("문제 완전성", learner_text)
+            self.assertIn("해설 완전성", learner_text)
+            self.assertIn("완성형 객관식", learner_text)
+            self.assertNotIn("심각도", learner_text)
+            self.assertNotIn("코드", learner_text)
+
+    def test_generated_ids_are_hidden_but_source_literals_are_preserved(self) -> None:
+        ledger = valid_ledger()
+        ledger["question_occurrences"][0]["original_problem"] = "Q-1 표지를 포함한 원문"
+        attach_semantic_contract(ledger)
+        with tempfile.TemporaryDirectory() as tmp:
+            _, report = self.save_and_verify(ledger, Path(tmp), "source-id-literal.docx")
+            self.assertTrue(report["valid"], report["errors"])
+
+        ledger = valid_ledger()
+        ledger["representative_types"][0]["title"] = "완성형 객관식 R-1"
+        with tempfile.TemporaryDirectory() as tmp:
+            _, report = self.save_and_verify(ledger, Path(tmp), "leaked-id.docx")
+            self.assertFalse(report["valid"])
+            self.assertTrue(any("technical ID is visible" in error for error in report["errors"]))
+
+    def test_compact_audit_expands_only_for_review_cases(self) -> None:
+        ledger = valid_ledger()
+        atom = next(item for item in ledger["semantic_atoms"] if item["category"] == "problem")
+        ledger["semantic_coverage"] = [
+            item for item in ledger["semantic_coverage"] if item["atom_id"] != atom["id"]
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "review.docx"
+            build_document(ledger, None, "검수 필요 초안").save(output)
+            root, _ = read_parts(output)
+            text = visible_text(root)
+            self.assertIn("검수 필요 사항", text)
+            self.assertIn("문제 의미 반영", text)
+            self.assertNotIn(atom["id"], text)
 
     def test_types_repetition_long_explanation_and_conflict(self) -> None:
         ledger = valid_ledger()
@@ -391,7 +778,14 @@ class DocxTests(unittest.TestCase):
                     "question_ids": ["Q-4"],
                     "problem_components": [{"text": essay["original_problem"], "provenance": original("Q-4", "original_problem")}],
                     "choice_components": [],
-                    "answer_components": [{"text": "모든 하위 질문의 완전 답안", "provenance": original("Q-4", "original_answer")}],
+                    "answer_components": [
+                        {
+                            "text": "모든 하위 질문의 완전 답안",
+                            "provenance": [
+                                {"kind": "ai_reconstruction_from_questions", "source_question_ids": ["Q-4"]}
+                            ],
+                        }
+                    ],
                     "explanation_components": [{"text": essay["original_explanation"], "provenance": original("Q-4", "original_explanation")}],
                 },
                 {
@@ -409,6 +803,7 @@ class DocxTests(unittest.TestCase):
             ]
         )
         ledger["prior_year_sequence"][0]["conflict_status"] = "disputed"
+        attach_semantic_contract(ledger)
         with tempfile.TemporaryDirectory() as tmp:
             output, report = self.save_and_verify(ledger, Path(tmp), "types.docx")
             self.assertTrue(report["valid"], report["errors"])

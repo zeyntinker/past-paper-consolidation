@@ -17,6 +17,27 @@ PROVENANCE_KINDS = {
     "source_unverified",
 }
 
+SEMANTIC_ATOM_CATEGORIES = {
+    "problem",
+    "original_explanation",
+    "lecture_note",
+    "external_supplement",
+}
+SEMANTIC_RELEVANCE_STATUSES = {"required", "excluded", "review_required"}
+SEMANTIC_TARGET_KINDS = {
+    "problem_component",
+    "choice_component",
+    "answer_component",
+    "rationale_component",
+    "explanation_component",
+}
+SEMANTIC_INTEGRATION_MODES = {
+    "exact",
+    "synthesized",
+    "duplicate_merged",
+    "conditional_split",
+}
+
 
 def load_json(path: str | Path) -> Any:
     with Path(path).open("r", encoding="utf-8") as handle:

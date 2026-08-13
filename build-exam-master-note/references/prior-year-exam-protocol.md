@@ -12,7 +12,7 @@ Use the reconstruction file's visible problem order as the primary exam order. D
 
 ## Original preservation
 
-For every sequence entry, include exact reconstructed problem and choices, exact original answer/explanation from every selected file, original images, and file/page/question ID/source order.
+For every sequence entry, include exact reconstructed problem and choices, exact original answer/explanation from every selected file, original images, and file/page/source order. Keep question IDs in the ledger only.
 
 Do not silently choose one wording when reconstruction and explanation files differ.
 
@@ -20,11 +20,13 @@ Do not silently choose one wording when reconstruction and explanation files dif
 
 Supplement incomplete problems or explanations in this strict order:
 
-1. Part 1 representative type: `[단권화 보충 · representative ID]`.
+1. Part 1 representative type: `[단권화 보충 · 강의 단원 · 대표문제 제목]`.
 2. Verified authoritative external source: `[AI 외부 보충 · source]`.
 3. `[출처 확인 필요]` when no trustworthy source exists.
 
 Never relabel a supplement as original.
+
+The learner-facing label uses the Part 1 lecture unit and representative title, never its internal ID. The ledger retains the ID relationship.
 
 ## Conflicts
 

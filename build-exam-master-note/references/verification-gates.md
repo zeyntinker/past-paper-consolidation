@@ -10,7 +10,10 @@ All conditions must pass:
 - Every question occurrence is recorded and has a Word location.
 - Every original problem, choice, answer, and explanation matches the source string.
 - Every image has a Word location or an explicit review finding.
-- Every representative component has valid provenance.
+- Every representative component has valid provenance and an internal component ID.
+- Every required problem atom maps to a visible representative problem/choice component.
+- Every required original-explanation and relevant lecture-note atom maps to a visible answer/rationale/explanation component.
+- Every representative has a complete independent second-pass reread with no unresolved atom.
 - Every objective choice has a verdict and sourced rationale.
 - Lecture ordering follows date then period.
 - Prior-year sequence matches the order authority.
@@ -33,4 +36,4 @@ Use `review_required` for inventory changes, unsupported/corrupt/encrypted files
 
 ## Independent verification
 
-The verification pass reads the final DOCX and ledger without trusting the generation process. It checks IDs, exact source strings, image counts, sequence order, provenance labels, and audit totals. A failure returns the run to the earliest affected stage.
+The verification pass reads the final DOCX and ledger without trusting the generation process. It uses internal IDs only through non-visible OOXML metadata. It checks exact source strings, image counts, sequence order, human-readable provenance labels, semantic coverage totals, and the compact audit summary. Generated technical IDs in visible headings, provenance, captions, headers, or audit rows are a failure. A failure returns the run to the earliest affected stage.
