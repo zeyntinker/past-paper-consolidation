@@ -51,6 +51,8 @@ def read_parts(docx_path: Path) -> tuple[ElementTree.Element, dict[str, ElementT
                 parts[name] = ElementTree.fromstring(archive.read(name))
             elif name.startswith("word/footer") and name.endswith(".xml"):
                 parts[name] = ElementTree.fromstring(archive.read(name))
+            elif name == "word/styles.xml":
+                parts[name] = ElementTree.fromstring(archive.read(name))
     return document, parts
 
 
@@ -87,19 +89,28 @@ def inspect_layout(root: ElementTree.Element, parts: dict[str, ElementTree.Eleme
 def verify_geometry(layout: dict[str, Any], ledger: dict[str, Any], errors: list[str]) -> None:
     root_tables = layout["tables"]
     identified = layout["identified_tables"]
-    expected_grid = [4428, 5412]
+    expected_grid = [1293, 4632, 4847]
     for representative in ledger.get("representative_types", []):
         caption = f"representative:{representative.get('id', '?')}"
         table = identified.get(caption)
         if table is None:
-            errors.append(f"missing representative 45:55 table: {caption}")
+            errors.append(f"missing representative 12:43:45 table: {caption}")
             continue
         if table_grid(table) != expected_grid:
-            errors.append(f"wrong 45:55 grid for {caption}: {table_grid(table)}")
+            errors.append(f"wrong 12:43:45 grid for {caption}: {table_grid(table)}")
         if table.find("./w:tr[1]/w:trPr/w:tblHeader", NS) is None:
             errors.append(f"missing repeated header row flag: {caption}")
 
-    expected_occurrences = len(ledger.get("question_occurrences", [])) + sum(
+        expected_rows = 2 + len(representative.get("question_ids", []))
+        actual_non_image_rows = len(
+            [row for row in table.findall("./w:tr", NS) if row.find(".//a:blip", NS) is None]
+        )
+        if actual_non_image_rows != expected_rows:
+            errors.append(
+                f"representative row count mismatch for {caption}: expected {expected_rows}, found {actual_non_image_rows}"
+            )
+
+    expected_occurrences = sum(
         len(entry.get("question_ids", [])) for entry in ledger.get("prior_year_sequence", [])
     )
     occurrence_tables = [table for table in root_tables if table_caption(table).startswith("occurrence:")]
@@ -110,12 +121,12 @@ def verify_geometry(layout: dict[str, Any], ledger: dict[str, Any], errors: list
     for table in occurrence_tables:
         caption = table_caption(table)
         if table_grid(table) != expected_grid:
-            errors.append(f"wrong 45:55 grid for {caption}: {table_grid(table)}")
+            errors.append(f"wrong 12:43:45 grid for {caption}: {table_grid(table)}")
         if table.find("./w:tr[1]/w:trPr/w:tblHeader", NS) is None:
             errors.append(f"missing repeated header row flag: {caption}")
 
-    if layout["image_cell_spans"] and any(span != 2 for span in layout["image_cell_spans"]):
-        errors.append("one or more images are not in a full-width merged two-column row")
+    if layout["image_cell_spans"] and any(span != 3 for span in layout["image_cell_spans"]):
+        errors.append("one or more images are not in a full-width merged three-column row")
 
 
 def verify_sections(root: ElementTree.Element, layout: dict[str, Any], ledger: dict[str, Any], errors: list[str]) -> None:
@@ -132,8 +143,8 @@ def verify_sections(root: ElementTree.Element, layout: dict[str, Any], ledger: d
         else:
             for side in ("left", "right"):
                 value = int(margin.get(attr(side), "0"))
-                if not 900 <= value <= 1021:
-                    errors.append(f"section {index} {side} margin is outside 16-18 mm: {value}")
+                if not 520 <= value <= 620:
+                    errors.append(f"section {index} {side} margin is outside 9-11 mm: {value}")
 
     header_text = "\n".join(layout["headers"])
     required_headers = {rep.get("lecture_unit", "강의 순서 단권화") for rep in ledger.get("representative_types", [])}
@@ -143,6 +154,39 @@ def verify_sections(root: ElementTree.Element, layout: dict[str, Any], ledger: d
             errors.append(f"missing running header: {required}")
     if any(text for text in layout["footers"]):
         errors.append("footer content exists although the layout contract requires header only")
+
+
+def verify_seven_point_type(
+    root: ElementTree.Element,
+    parts: dict[str, ElementTree.Element],
+    errors: list[str],
+) -> None:
+    roots = [root, *[part for name, part in parts.items() if name != "word/styles.xml"]]
+    invalid: list[str] = []
+    for part_root in roots:
+        for node in part_root.findall(".//w:sz", NS) + part_root.findall(".//w:szCs", NS):
+            value = node.get(attr("val"), "")
+            if value and value != "14":
+                invalid.append(value)
+    styles = parts.get("word/styles.xml")
+    if styles is not None:
+        for style_id in ("Normal", "Heading1", "Heading2", "Heading3"):
+            style = next(
+                (
+                    item
+                    for item in styles.findall("./w:style", NS)
+                    if item.get(attr("styleId")) == style_id
+                ),
+                None,
+            )
+            if style is None:
+                continue
+            for node in style.findall("./w:rPr/w:sz", NS) + style.findall("./w:rPr/w:szCs", NS):
+                value = node.get(attr("val"), "")
+                if value and value != "14":
+                    invalid.append(value)
+    if invalid:
+        errors.append(f"font size is not uniformly 7 pt; found half-point values: {sorted(set(invalid))}")
 
 
 def verify_plain_provenance(root: ElementTree.Element, errors: list[str]) -> None:
@@ -299,6 +343,7 @@ def verify_docx(docx_path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
 
     verify_geometry(layout, ledger, errors)
     verify_sections(root, layout, ledger, errors)
+    verify_seven_point_type(root, parts, errors)
     verify_plain_provenance(root, errors)
     verify_no_visible_technical_ids(root, parts, ledger, errors)
     verify_compact_audit(root, validation, errors)

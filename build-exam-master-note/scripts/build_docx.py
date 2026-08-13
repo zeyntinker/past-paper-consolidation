@@ -12,16 +12,18 @@ from validate_ledger import validate_ledger
 
 PAGE_WIDTH_DXA = 11906
 PAGE_HEIGHT_DXA = 16838
-SIDE_MARGIN_DXA = 964  # 17 mm
+SIDE_MARGIN_DXA = 567  # 10 mm
 TOP_BOTTOM_MARGIN_DXA = 1134  # 20 mm
-TABLE_INDENT_DXA = 120
-TABLE_WIDTH_DXA = 9840
-PROBLEM_WIDTH_DXA = 4428  # 45%
-EXPLANATION_WIDTH_DXA = 5412  # 55%
-CELL_MARGIN_TOP_BOTTOM_DXA = 113  # about 2.0 mm
-CELL_MARGIN_LEFT_RIGHT_DXA = 142  # about 2.5 mm
-PROVENANCE_SIZE_PT = 8.5
-BODY_SIZE_PT = 10
+TABLE_INDENT_DXA = 0
+TABLE_WIDTH_DXA = 10772
+CATEGORY_WIDTH_DXA = 1293  # 12%
+PROBLEM_WIDTH_DXA = 4632  # 43%
+EXPLANATION_WIDTH_DXA = 4847  # 45%
+CELL_MARGIN_TOP_BOTTOM_DXA = 70
+CELL_MARGIN_LEFT_RIGHT_DXA = 85
+FONT_SIZE_PT = 7
+PROVENANCE_SIZE_PT = FONT_SIZE_PT
+BODY_SIZE_PT = FONT_SIZE_PT
 
 
 def require_docx() -> None:
@@ -32,6 +34,7 @@ def require_docx() -> None:
 
 
 def set_run_font(run: Any, name: str = "Malgun Gothic", size: float | None = None, **kwargs: Any) -> None:
+    from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Pt
 
@@ -42,6 +45,11 @@ def set_run_font(run: Any, name: str = "Malgun Gothic", size: float | None = Non
     r_pr.rFonts.set(qn("w:eastAsia"), name)
     if size is not None:
         run.font.size = Pt(size)
+        sz_cs = r_pr.find(qn("w:szCs"))
+        if sz_cs is None:
+            sz_cs = OxmlElement("w:szCs")
+            r_pr.append(sz_cs)
+        sz_cs.set(qn("w:val"), str(int(size * 2)))
     for key, value in kwargs.items():
         setattr(run.font, key, value)
 
@@ -172,12 +180,12 @@ def next_paragraph(container: Any) -> Any:
     return container.add_paragraph()
 
 
-def style_paragraph(paragraph: Any, *, after: float = 4, keep: bool = True) -> None:
+def style_paragraph(paragraph: Any, *, after: float = 2, keep: bool = True) -> None:
     from docx.shared import Pt
 
     paragraph.paragraph_format.space_before = Pt(0)
     paragraph.paragraph_format.space_after = Pt(after)
-    paragraph.paragraph_format.line_spacing = 1.15
+    paragraph.paragraph_format.line_spacing = 1.0
     paragraph.paragraph_format.keep_together = keep
 
 
@@ -209,12 +217,13 @@ def set_running_header(section: Any, text: str) -> None:
     paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
     style_paragraph(paragraph, after=0)
     run = paragraph.add_run(text)
-    set_run_font(run, size=9, bold=True)
+    set_run_font(run, size=FONT_SIZE_PT, bold=True)
     section.footer.is_linked_to_previous = False
     clear_story(section.footer)
 
 
 def configure_styles(document: Any) -> None:
+    from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Pt, RGBColor
 
@@ -224,10 +233,10 @@ def configure_styles(document: Any) -> None:
         clear_story(section.header)
 
     tokens = {
-        "Normal": (10, "000000", 0, 4, 1.15),
-        "Heading 1": (16, "2E74B5", 18, 10, 1.0),
-        "Heading 2": (13, "2E74B5", 14, 7, 1.0),
-        "Heading 3": (11, "1F4D78", 8, 5, 1.0),
+        "Normal": (FONT_SIZE_PT, "000000", 0, 2, 1.0),
+        "Heading 1": (FONT_SIZE_PT, "000000", 6, 3, 1.0),
+        "Heading 2": (FONT_SIZE_PT, "000000", 4, 2, 1.0),
+        "Heading 3": (FONT_SIZE_PT, "000000", 3, 2, 1.0),
     }
     for name, (size, color, before, after, spacing) in tokens.items():
         style = document.styles[name]
@@ -237,6 +246,11 @@ def configure_styles(document: Any) -> None:
         r_pr.rFonts.set(qn("w:hAnsi"), "Malgun Gothic")
         r_pr.rFonts.set(qn("w:eastAsia"), "Malgun Gothic")
         style.font.size = Pt(size)
+        sz_cs = r_pr.find(qn("w:szCs"))
+        if sz_cs is None:
+            sz_cs = OxmlElement("w:szCs")
+            r_pr.append(sz_cs)
+        sz_cs.set(qn("w:val"), str(int(size * 2)))
         style.font.color.rgb = RGBColor.from_string(color)
         style.paragraph_format.space_before = Pt(before)
         style.paragraph_format.space_after = Pt(after)
@@ -336,7 +350,7 @@ def add_labeled_text(container: Any, label: str, text: str, source_label: str = 
     paragraph = next_paragraph(container)
     style_paragraph(paragraph)
     lead = paragraph.add_run(f"{label}: ")
-    set_run_font(lead, size=10.5, bold=True)
+    set_run_font(lead, size=FONT_SIZE_PT, bold=True)
     value = paragraph.add_run(text)
     set_run_font(value, size=BODY_SIZE_PT)
     add_plain_label(paragraph, source_label)
@@ -389,16 +403,16 @@ def add_table_image_rows(
             continue
         seen.add(image_id)
         cells = table.add_row().cells
-        merged = cells[0].merge(cells[1])
+        merged = cells[0].merge(cells[1]).merge(cells[2])
         clear_container(merged)
         add_image_to_cell(merged, images[image_id], sources)
 
 
 def make_problem_table(document: Any, caption: str) -> Any:
-    table = document.add_table(rows=2, cols=2)
+    table = document.add_table(rows=1, cols=3)
     table.style = "Table Grid"
     set_table_caption(table, caption)
-    headers = ["문제", "답·해설"]
+    headers = ["구분 / 연도", "문제", "해설"]
     for index, header in enumerate(headers):
         cell = table.rows[0].cells[index]
         cell.text = ""
@@ -406,10 +420,58 @@ def make_problem_table(document: Any, caption: str) -> Any:
         paragraph.alignment = 1
         style_paragraph(paragraph, after=0)
         run = paragraph.add_run(header)
-        set_run_font(run, size=10.5, bold=True)
-        set_cell_shading(cell, "E8EEF5")
+        set_run_font(run, size=FONT_SIZE_PT, bold=True)
+        set_cell_shading(cell, "D9D9D9")
     repeat_table_header(table.rows[0])
+    set_table_geometry(table, [CATEGORY_WIDTH_DXA, PROBLEM_WIDTH_DXA, EXPLANATION_WIDTH_DXA])
     return table
+
+
+def add_category_cell(cell: Any, text: str, *, representative: bool = False) -> None:
+    clear_container(cell)
+    paragraph = next_paragraph(cell)
+    style_paragraph(paragraph, after=0)
+    run = paragraph.add_run(text)
+    set_run_font(run, size=FONT_SIZE_PT, bold=representative)
+    if representative:
+        set_cell_shading(cell, "EFEFEF")
+
+
+def add_occurrence_row(
+    table: Any,
+    question: dict[str, Any],
+    sources: dict[str, dict[str, Any]],
+    images: dict[str, dict[str, Any]],
+    *,
+    category: str,
+    supplements: list[dict[str, Any]] | None = None,
+    conflict_status: str | None = None,
+    representatives: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    artifact = sources.get(question.get("source_artifact_id"), {})
+    cells = table.add_row().cells
+    add_category_cell(cells[0], category)
+    clear_container(cells[1])
+    clear_container(cells[2])
+    source_label = exact_source_label(question, artifact)
+    add_labeled_text(cells[1], "문제", question.get("original_problem", ""), source_label)
+    for index, choice in enumerate(question.get("original_choices", []), start=1):
+        add_labeled_text(cells[1], f"선지 {index}", choice, source_label)
+    add_labeled_text(cells[2], "원문 답", question.get("original_answer", ""), source_label)
+    add_labeled_text(cells[2], "원문 해설", question.get("original_explanation", ""), source_label)
+    if supplements:
+        label = next_paragraph(cells[2])
+        style_paragraph(label, after=2)
+        run = label.add_run("검토·보충")
+        set_run_font(run, size=FONT_SIZE_PT, bold=True)
+        for component in supplements:
+            add_component(cells[2], component, {}, sources, representatives)
+    if conflict_status not in {None, "none", "resolved"}:
+        warning = next_paragraph(cells[2])
+        style_paragraph(warning, after=2)
+        run = warning.add_run(f"[검토 필요] 원문 답과 보충 판정 불일치 · {conflict_status}")
+        set_run_font(run, size=FONT_SIZE_PT, bold=True)
+    add_table_image_rows(table, question.get("image_ids", []), images, sources)
 
 
 def add_representative_table(
@@ -421,9 +483,12 @@ def add_representative_table(
     representatives: dict[str, dict[str, Any]],
 ) -> None:
     table = make_problem_table(document, f"representative:{representative.get('id', '?')}")
-    left, right = table.rows[1].cells
+    category, left, right = table.add_row().cells
+    add_category_cell(category, f"[대표유형 - {representative.get('question_type', '문제')}]", representative=True)
     clear_container(left)
     clear_container(right)
+    set_cell_shading(left, "EFEFEF")
+    set_cell_shading(right, "EFEFEF")
 
     for component in representative.get("problem_components", []):
         add_component(left, component, questions, sources, representatives)
@@ -431,15 +496,15 @@ def add_representative_table(
         add_component(left, component, questions, sources, representatives, prefix=f"{index}. ")
 
     q_type = representative.get("question_type", "")
-    heading = "정답 및 선지별 완전 해설" if q_type == "객관식" else "완전 답안 및 해설"
+    heading = "정답 및 선지별 완전 해설" if q_type in {"객관식", "objective", "multiple_choice"} else "완전 답안 및 해설"
     head = next_paragraph(right)
     style_paragraph(head, after=5)
     head_run = head.add_run(heading)
-    set_run_font(head_run, size=10.5, bold=True)
+    set_run_font(head_run, size=FONT_SIZE_PT, bold=True)
 
     for component in representative.get("answer_components", []):
         add_component(right, component, questions, sources, representatives, prefix="정답: ")
-    if q_type == "객관식":
+    if q_type in {"객관식", "objective", "multiple_choice"}:
         for index, component in enumerate(representative.get("choice_components", []), start=1):
             verdict = component.get("verdict", "?")
             add_component(right, component, questions, sources, representatives, prefix=f"선지 {index} · {verdict}: ")
@@ -449,12 +514,36 @@ def add_representative_table(
         add_component(right, component, questions, sources, representatives)
 
     linked = [questions[qid] for qid in representative.get("question_ids", []) if qid in questions]
-    image_ids = [image_id for question in linked for image_id in question.get("image_ids", [])]
-    add_table_image_rows(table, image_ids, images, sources)
+    linked.sort(key=lambda item: (item.get("year") or 9999, item.get("source_order") or 9999))
+    representative_image_ids = list(
+        dict.fromkeys(
+            [image_id for image_id in representative.get("image_ids", []) if image_id in images]
+            + [
+                image_id
+                for question in linked
+                for image_id in question.get("image_ids", [])
+                if image_id in images
+            ]
+        )
+    )
+    add_table_image_rows(table, representative_image_ids, images, sources)
+    for question in linked:
+        artifact = sources.get(question.get("source_artifact_id"), {})
+        category_text = " · ".join(
+            filter(None, [str(question.get("year", "?")) + "년", artifact.get("file_name")])
+        )
+        add_occurrence_row(
+            table,
+            question,
+            sources,
+            images,
+            category=category_text,
+            representatives=representatives,
+        )
     char_count = sum(len(str(component.get("text", ""))) for component in representative.get("explanation_components", []))
     if char_count < 1000:
         prevent_row_split(table.rows[1])
-    set_table_geometry(table, [PROBLEM_WIDTH_DXA, EXPLANATION_WIDTH_DXA])
+    set_table_geometry(table, [CATEGORY_WIDTH_DXA, PROBLEM_WIDTH_DXA, EXPLANATION_WIDTH_DXA])
 
 
 def exact_source_label(question: dict[str, Any], artifact: dict[str, Any]) -> str:
@@ -475,34 +564,28 @@ def add_source_occurrence(
     from docx.shared import Pt
 
     artifact = sources.get(question.get("source_artifact_id"), {})
-    heading = document.add_heading(
-        f"{question.get('year', '?')}년 · {artifact.get('file_name', '?')} · {question.get('source_page', '?')}쪽",
-        level=3,
-    )
-    heading.paragraph_format.keep_with_next = True
     table = make_problem_table(document, f"occurrence:{location}:{question.get('id', '?')}")
-    left, right = table.rows[1].cells
-    clear_container(left)
-    clear_container(right)
-    source_label = exact_source_label(question, artifact)
-    add_labeled_text(left, "문제", question.get("original_problem", ""), source_label)
-    for index, choice in enumerate(question.get("original_choices", []), start=1):
-        add_labeled_text(left, f"선지 {index}", choice, source_label)
-    add_labeled_text(right, "원문 답", question.get("original_answer", ""), source_label)
-    add_labeled_text(right, "원문 해설", question.get("original_explanation", ""), source_label)
-    if supplements:
-        label = next_paragraph(right)
-        style_paragraph(label, after=3)
-        run = label.add_run("검토·보충")
-        set_run_font(run, size=10.5, bold=True)
-        for component in supplements:
-            add_component(right, component, {}, sources, representatives)
-    if conflict_status not in {None, "none", "resolved"}:
-        warning = next_paragraph(right)
-        style_paragraph(warning, after=4)
-        run = warning.add_run(f"원문 답과 보충 판정 불일치 · {conflict_status}")
-        set_run_font(run, size=10.5, bold=True)
-    add_table_image_rows(table, question.get("image_ids", []), images, sources)
+    sequence = location.rsplit(":", 1)[-1] if location.startswith("part2:") else ""
+    category = " · ".join(
+        filter(
+            None,
+            [
+                f"작년 · {sequence}번" if sequence else None,
+                str(question.get("year", "?")) + "년",
+                artifact.get("file_name"),
+            ],
+        )
+    )
+    add_occurrence_row(
+        table,
+        question,
+        sources,
+        images,
+        category=category,
+        supplements=supplements,
+        conflict_status=conflict_status,
+        representatives=representatives,
+    )
     source_length = sum(
         len(str(value))
         for value in (
@@ -512,33 +595,31 @@ def add_source_occurrence(
             *question.get("original_choices", []),
         )
     )
-    if source_length < 1000:
+    if source_length < 1000 and len(table.rows) > 1:
         prevent_row_split(table.rows[1])
-    set_table_geometry(table, [PROBLEM_WIDTH_DXA, EXPLANATION_WIDTH_DXA])
+    set_table_geometry(table, [CATEGORY_WIDTH_DXA, PROBLEM_WIDTH_DXA, EXPLANATION_WIDTH_DXA])
     spacer = document.add_paragraph()
     spacer.paragraph_format.space_after = Pt(4)
 
 
 def add_title_page(document: Any, ledger: dict[str, Any], status: str) -> None:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.shared import Pt, RGBColor
+    from docx.shared import Pt
 
     spacer = document.add_paragraph()
-    spacer.paragraph_format.space_after = Pt(72)
+    spacer.paragraph_format.space_after = Pt(12)
     kicker = document.add_paragraph()
     kicker.alignment = WD_ALIGN_PARAGRAPH.CENTER
     kicker_run = kicker.add_run("VERIFIED EXAM REFERENCE")
-    set_run_font(kicker_run, size=10, bold=True)
-    kicker_run.font.color.rgb = RGBColor.from_string("2E74B5")
+    set_run_font(kicker_run, size=FONT_SIZE_PT, bold=True)
     title = document.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title_run = title.add_run(ledger.get("course_title", "시험 단권화 노트"))
-    set_run_font(title_run, size=28, bold=True)
+    set_run_font(title_run, size=FONT_SIZE_PT, bold=True)
     subtitle = document.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     subtitle_run = subtitle.add_run(f"강의 순서 단권화 · 작년 기출 실전 순서 · 완전성 감사표\n상태: {status}")
-    set_run_font(subtitle_run, size=12)
-    subtitle_run.font.color.rgb = RGBColor.from_string("475467")
+    set_run_font(subtitle_run, size=FONT_SIZE_PT)
 
 
 def humanize_audit_text(
@@ -582,7 +663,7 @@ def add_compact_audit(
     headers = ["대표문제", "문제 완전성", "해설 완전성", "미해결", "상태"]
     for index, header in enumerate(headers):
         table.rows[0].cells[index].text = header
-        set_cell_shading(table.rows[0].cells[index], "E8EEF5")
+        set_cell_shading(table.rows[0].cells[index], "D9D9D9")
     repeat_table_header(table.rows[0])
     for summary in validation.get("representative_coverage", []):
         cells = table.add_row().cells
@@ -670,23 +751,10 @@ def build_document(ledger: dict[str, Any], template: Path | None, status: str) -
         ).paragraph_format.keep_with_next = True
         document.add_heading("대표 문제와 완전 해설", level=3).paragraph_format.keep_with_next = True
         add_representative_table(document, representative, questions, sources, images, representative_map)
-        document.add_heading("연도별 원문", level=3).paragraph_format.keep_with_next = True
-        linked = [questions[qid] for qid in representative.get("question_ids", []) if qid in questions]
-        linked.sort(key=lambda item: (item.get("year") or 9999, item.get("source_order") or 9999))
-        for question in linked:
-            add_source_occurrence(
-                document,
-                question,
-                sources,
-                images,
-                location=f"part1:{representative.get('id')}",
-                representatives=representative_map,
-            )
 
     add_section(document, "작년 기출 실전 순서")
     document.add_heading("제2부. 작년 기출 실전 순서", level=1)
     for entry in ledger.get("prior_year_sequence", []):
-        document.add_heading(f"{entry.get('sequence')}번", level=2).paragraph_format.keep_with_next = True
         for question_id in entry.get("question_ids", []):
             if question_id in questions:
                 add_source_occurrence(

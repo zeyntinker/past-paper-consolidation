@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections import Counter
 from typing import Any
@@ -26,6 +27,21 @@ QUESTION_FIELDS = {
 
 PROBLEM_TARGETS = {"problem_component", "choice_component"}
 EXPLANATION_TARGETS = {"answer_component", "rationale_component", "explanation_component"}
+
+
+def substantive_text(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = re.sub(r"\s+", " ", value).strip()
+    if not text:
+        return False
+    shells = (
+        r"^-?\s*\d+\s*-?$",
+        r"^(문제|문항)\s*\d*\s*[.)-]?$",
+        r"^(해설|정답|답)\s*(참조|확인)?\s*$",
+        r"^(교과서|족보|강의안|자료)\s*(참조|확인)\s*$",
+    )
+    return not any(re.fullmatch(pattern, text, flags=re.IGNORECASE) for pattern in shells)
 
 
 def representative_components(
@@ -266,6 +282,34 @@ def validate_semantic_completeness(
 
     for representative in representatives:
         rep_id = representative.get("id")
+        problem_text = " ".join(
+            str(component.get("text", ""))
+            for component in representative.get("problem_components", [])
+            if isinstance(component, dict)
+        )
+        if not substantive_text(problem_text):
+            errors.append(f"{rep_id} representative problem has no substantive problem text")
+        answer_components = representative.get("answer_components", [])
+        explanation_components = representative.get("explanation_components", [])
+        if not any(substantive_text(item.get("text")) for item in answer_components if isinstance(item, dict)):
+            errors.append(f"{rep_id} representative solution has no substantive answer")
+        if not any(substantive_text(item.get("text")) for item in explanation_components if isinstance(item, dict)):
+            errors.append(f"{rep_id} representative solution has no substantive explanation")
+
+        linked_question_ids = set(representative.get("question_ids", []))
+        if len(linked_question_ids) > 1:
+            solution_components = [*answer_components, *explanation_components]
+            has_integrated_solution = any(
+                linked_question_ids.issubset(set(source.get("source_question_ids", [])))
+                for component in solution_components
+                if isinstance(component, dict) and substantive_text(component.get("text"))
+                for source in component.get("provenance", [])
+                if source.get("kind") == "ai_reconstruction_from_questions"
+            )
+            if not has_integrated_solution:
+                errors.append(
+                    f"{rep_id} has no coherent synthesized solution spanning every linked question"
+                )
         rep_atoms = [
             atom
             for atom in atoms
@@ -329,6 +373,18 @@ def validate_semantic_completeness(
             if review.get("status") != "complete":
                 errors.append(f"{rep_id} second-pass reread is not complete")
                 unresolved += 1
+            quality = review.get("synthesis_quality", {})
+            required_quality = (
+                "problem_complete",
+                "explanation_complete",
+                "coherent_single_problem",
+                "coherent_single_answer",
+                "format_complete",
+            )
+            failed_quality = [key for key in required_quality if quality.get(key) is not True]
+            if failed_quality:
+                errors.append(f"{rep_id} synthesis quality review failed: {failed_quality}")
+                unresolved += len(failed_quality)
             unresolved_ids = review.get("unresolved_atom_ids")
             if not isinstance(unresolved_ids, list) or unresolved_ids:
                 errors.append(f"{rep_id} second-pass reread has unresolved atoms")

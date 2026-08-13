@@ -259,6 +259,13 @@ def attach_semantic_contract(ledger: dict) -> dict:
                 "discovered_atom_ids": [],
                 "unresolved_atom_ids": [],
                 "notes": "정규화 원문을 독립적으로 재검토함",
+                "synthesis_quality": {
+                    "problem_complete": True,
+                    "explanation_complete": True,
+                    "coherent_single_problem": True,
+                    "coherent_single_answer": True,
+                    "format_complete": True,
+                },
                 "status": "complete",
             }
         )
@@ -370,6 +377,15 @@ def valid_ledger() -> dict:
             {"text": "정답 A", "provenance": original("Q-1", "original_answer")},
         ],
         "explanation_components": [
+            {
+                "text": "두 기출의 해설과 강의 근거를 통합하면 A는 옳고 B와 C는 각 개념의 적용 조건을 충족하지 않아 틀리다.",
+                "provenance": [
+                    {
+                        "kind": "ai_reconstruction_from_questions",
+                        "source_question_ids": ["Q-1", "Q-2"],
+                    }
+                ],
+            },
             {"text": "A가 옳다.", "provenance": original("Q-1", "original_explanation")},
             {"text": "해설 복기 불완전", "provenance": original("Q-2", "original_explanation")},
             copy.deepcopy(rationale),
@@ -477,6 +493,20 @@ class LedgerTests(unittest.TestCase):
         report = validate_ledger(ledger)
         self.assertFalse(report["valid"])
         self.assertTrue(any("unknown or mismatched component" in error for error in report["errors"]))
+
+    def test_problem_number_shell_is_rejected(self) -> None:
+        ledger = valid_ledger()
+        ledger["representative_types"][0]["problem_components"][0]["text"] = "- 1 -"
+        report = validate_ledger(ledger)
+        self.assertFalse(report["valid"])
+        self.assertTrue(any("no substantive problem text" in error for error in report["errors"]))
+
+    def test_incomplete_synthesis_quality_review_is_rejected(self) -> None:
+        ledger = valid_ledger()
+        ledger["second_pass_reviews"][0]["synthesis_quality"]["coherent_single_answer"] = False
+        report = validate_ledger(ledger)
+        self.assertFalse(report["valid"])
+        self.assertTrue(any("synthesis quality review failed" in error for error in report["errors"]))
 
     def test_unmapped_problem_atom_is_rejected(self) -> None:
         ledger = valid_ledger()
@@ -648,12 +678,12 @@ class DocxTests(unittest.TestCase):
             self.assertTrue(report["valid"], report["errors"])
             self.assertGreaterEqual(report["counts"]["drawings_found"], 1)
 
-    def test_a4_45_55_repeated_headers_and_header_only(self) -> None:
+    def test_a4_12_43_45_repeated_headers_uniform_7pt_and_header_only(self) -> None:
         ledger = valid_ledger()
         with tempfile.TemporaryDirectory() as tmp:
             output, report = self.save_and_verify(ledger, Path(tmp), "layout.docx")
             self.assertTrue(report["valid"], report["errors"])
-            self.assertEqual(4, report["counts"]["problem_tables_found"])
+            self.assertEqual(2, report["counts"]["problem_tables_found"])
             with zipfile.ZipFile(output) as archive:
                 document_xml = archive.read("word/document.xml").decode("utf-8")
                 footer_xml = "".join(
@@ -669,8 +699,10 @@ class DocxTests(unittest.TestCase):
             self.assertIn('w:w="11906"', document_xml)
             self.assertIn('w:h="16838"', document_xml)
             self.assertIn('w:tblCaption w:val="representative:R-1"', document_xml)
-            self.assertIn('w:w="4428"', document_xml)
-            self.assertIn('w:w="5412"', document_xml)
+            self.assertIn('w:w="1293"', document_xml)
+            self.assertIn('w:w="4632"', document_xml)
+            self.assertIn('w:w="4847"', document_xml)
+            self.assertNotRegex(document_xml, r'<w:sz w:val="(?!14")[^"]+"')
             self.assertIn("w:tblHeader", document_xml)
             self.assertIn("제1강", header_xml)
             self.assertIn("작년 기출 실전 순서", header_xml)
@@ -686,6 +718,7 @@ class DocxTests(unittest.TestCase):
             self.assertIn("문제 완전성", learner_text)
             self.assertIn("해설 완전성", learner_text)
             self.assertIn("완성형 객관식", learner_text)
+            self.assertIn("[대표유형 - 객관식]", learner_text)
             self.assertNotIn("심각도", learner_text)
             self.assertNotIn("코드", learner_text)
 
@@ -725,6 +758,9 @@ class DocxTests(unittest.TestCase):
         repeated.update({"id": "Q-3", "year": 2022, "source_order": 2, "word_location": "part1/R-1/Q-3"})
         ledger["question_occurrences"].append(repeated)
         ledger["representative_types"][0]["question_ids"].append("Q-3")
+        ledger["representative_types"][0]["explanation_components"][0]["provenance"][0][
+            "source_question_ids"
+        ].append("Q-3")
         ledger["representative_types"][0]["explanation_components"].append(
             {
                 "text": "상세 기전과 예외를 빠짐없이 설명한다. " * 80,
@@ -812,7 +848,8 @@ class DocxTests(unittest.TestCase):
             self.assertIn("원문 답과 보충 판정 불일치", xml)
             self.assertIn("모든 하위 질문의 완전 답안", xml)
             self.assertIn("가상 진단", xml)
-            self.assertIn('w:tblCaption w:val="occurrence:part1:R-1:Q-3"', xml)
+            self.assertNotIn('w:tblCaption w:val="occurrence:part1:R-1:Q-3"', xml)
+            self.assertIn("2022년", xml)
             representative_start = xml.index('w:tblCaption w:val="representative:R-1"')
             representative_end = xml.index("</w:tbl>", representative_start)
             self.assertNotIn("w:cantSplit", xml[representative_start:representative_end])

@@ -14,6 +14,9 @@ All conditions must pass:
 - Every required problem atom maps to a visible representative problem/choice component.
 - Every required original-explanation and relevant lecture-note atom maps to a visible answer/rationale/explanation component.
 - Every representative has a complete independent second-pass reread with no unresolved atom.
+- Every representative has all five synthesis-quality checks explicitly true.
+- Every representative problem contains substantive problem text, not only a number, ID, answer, or provenance label.
+- Every representative answer is a coherent integrated solution rather than a source list, generic narration, or short summary.
 - Every objective choice has a verdict and sourced rationale.
 - Lecture ordering follows date then period.
 - Prior-year sequence matches the order authority.

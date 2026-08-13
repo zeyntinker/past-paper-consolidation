@@ -63,9 +63,11 @@ Require `id`, `atom_id`, `representative_type_id`, `target_kind`, `target_compon
 
 ### `second_pass_reviews[]`
 
-Require one record per representative type with `id`, `representative_type_id`, `reviewed_sources`, `discovered_atom_ids`, `unresolved_atom_ids`, `notes`, and `status`.
+Require one record per representative type with `id`, `representative_type_id`, `reviewed_sources`, `discovered_atom_ids`, `unresolved_atom_ids`, `synthesis_quality`, `notes`, and `status`.
 
 `reviewed_sources` lists every independently reread source artifact and physical page. It must cover all linked question pages and every required or review-pending atom page. Newly discovered meanings become atoms and must be mapped. Completion requires `status: complete` and an empty `unresolved_atom_ids` list.
+
+`synthesis_quality` contains five booleans, all of which must be `true`: `problem_complete`, `explanation_complete`, `coherent_single_problem`, `coherent_single_answer`, and `format_complete`. Set them only after reading the finished representative row itself. For a representative with multiple linked occurrences, at least one answer-side component must use `ai_reconstruction_from_questions` provenance spanning every linked question.
 
 ### `prior_year_sequence[]`
 

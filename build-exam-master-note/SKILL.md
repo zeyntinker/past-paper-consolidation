@@ -58,6 +58,8 @@ Read [provenance-schema.md](references/provenance-schema.md) before creating led
 
 Read [lecture-master-note-protocol.md](references/lecture-master-note-protocol.md). Detect the question-bank region conservatively. If an item might be a past question, include it as review-required instead of dropping it. Before synthesis, atomize every problem element, original-explanation meaning, and relevant lecture-note meaning. Create complete representative types, keep every year-specific original problem, answer, explanation, and image below them, then independently reread the normalized source and map every newly found meaning. Any unmapped or unresolved atom blocks completion.
 
+Treat the representative problem and answer as final study material, not extraction notes. The problem must be one complete, readable problem with all supported conditions, subquestions, and distinct choices. The answer must absorb every relevant original explanation and lecture-note meaning into one logical, systematic, detailed solution. Never output only a number, ID, citation, `해설 참조`, source-by-source notes, generic advice, or a short summary. If the evidence cannot support a trustworthy complete answer, preserve the originals and mark `[검토 필요]`; do not improvise.
+
 ### 4. Build prior-year exam order
 
 Read [prior-year-exam-protocol.md](references/prior-year-exam-protocol.md). Preserve the reconstruction file's original question order. Preserve reconstruction and explanation variants side by side when they conflict. Supplement first from Part 1 and only then from verified external sources.
@@ -73,6 +75,8 @@ Read [verification-gates.md](references/verification-gates.md) before deciding s
 Run `scripts/build_docx.py` using `assets/master-note-template.docx`, then run `scripts/verify_docx.py` against the independent ledger.
 
 Read [docx-layout-contract.md](references/docx-layout-contract.md) before building the document. Preserve exhaustive representative explanations: never shorten question-bank explanations or relevant lecture-note material merely to fit a table or reduce page count.
+
+Use the approved compact layout exactly: every visible character is 7 pt without exception; A4 portrait with 10 mm side margins; one 12%/43%/45% table per representative type with columns `구분 / 연도`, `문제`, and `해설`; the representative row comes first and every year-specific original row follows inside the same table. Use only grayscale shading, bold weight, spacing, and thin black borders for hierarchy.
 
 Use the installed documents skill's render workflow to render the DOCX to PNGs. Inspect every page at 100% zoom for clipped text, missing glyphs, broken tables, displaced images, and bad page breaks. Rebuild and re-render until clean.
 

@@ -39,4 +39,6 @@ The learner-facing label uses the Part 1 lecture unit and representative title, 
 
 Follow the real exam sequence. Each entry contains the sequence number, all original problem variants, all original answer/explanation variants, separate Part 1 supplement, separate external supplement if required, and all conflicts/review states.
 
+Use the same 12%/43%/45% three-column layout as Part 1. Put `작년 · 문항 번호/회차` in column 1, exact reconstructed problem content in column 2, and the exact original explanation followed by clearly labeled supplementation in column 3. Do not add representative rows or reorder entries by topic.
+
 Part 2 may repeat Part 1; exam-order usability takes precedence over deduplication.

@@ -28,6 +28,7 @@ For each group:
 2. Mark reconstructed text with human-readable source years/files, never internal IDs.
 3. Put every year-specific source occurrence below it with `[원문]` labels.
 4. Show all years, including exact repeats.
+5. Complete `second_pass_reviews[].synthesis_quality` only after separately confirming all five booleans: `problem_complete`, `explanation_complete`, `coherent_single_problem`, `coherent_single_answer`, and `format_complete`. A false or missing value blocks completion.
 
 ### Objective questions
 
@@ -53,6 +54,8 @@ When a full problem cannot be safely reconstructed, create a keyword representat
 ## Explanation completion
 
 Create one logical and systematic complete answer that absorbs all required source meanings. Do not summarize, excerpt, concatenate source blocks, or organize the answer source by source.
+
+The answer must read as one expert-authored solution, not as notes about the sources. Never write phrases such as `해설 참조`, narrate that a file was read, list citations in place of reasoning, or pad gaps with generic advice. For more than one linked occurrence, include an integrated solution component whose reconstruction provenance spans every linked question. Then organize the visible explanation by answer, reasoning, choice verdicts or scoring elements, related concepts and exceptions, and memorization points where supported.
 
 Use sources in this order:
 
